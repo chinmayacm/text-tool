@@ -4,10 +4,42 @@
   width: 100vw;
 }
 
+.project-loading {
+  display: grid;
+  place-items: center;
+  height: 100vh;
+  color: #b8b8be;
+  background: #141417;
+  font-size: 13px;
+}
+
 .canvas {
+  position: relative;
   flex: 1;
   height: 100%;
   background: #141417;
+}
+
+.magnet-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.magnet-overlay line {
+  display: none;
+  stroke: #c084fc;
+  stroke-width: 2.5;
+  stroke-dasharray: 6 4;
+  filter: drop-shadow(0 0 4px rgba(192, 132, 252, 0.8));
+}
+
+.react-flow__node.magnet-target .op-node {
+  border-color: #c084fc;
+  box-shadow: 0 0 0 2px rgba(192, 132, 252, 0.75), 0 0 18px rgba(168, 85, 247, 0.55);
 }
 
 .inspector {

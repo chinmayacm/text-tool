@@ -15,12 +15,19 @@ export type OperationKind =
   | "output";
 
 export interface OperationParams {
-  input: { text: string; inputType: "single" | "lines" };
+  input: {
+    source: "text" | "file";
+    text: string;
+    fileName: string;
+    fileSize: number;
+    inputType: "single" | "lines" | "custom";
+    delimiter: string;
+  };
   split: { delimiter: string; useRegex: boolean };
   enclose: { prefix: string; suffix: string };
   join: { delimiter: string };
   merge: { delimiter: string; missingFallback: string };
-  append: { mode: "newline" | "inline"; text: string };
+  append: { text: string; scope: "all" | "row" | "insert"; side: "start" | "end"; line: number };
   trim: { mode: "both" | "start" | "end" };
   replace: { find: string; replaceWith: string; useRegex: boolean; all: boolean };
   case: { mode: "upper" | "lower" | "title" | "sentence" };
@@ -50,12 +57,12 @@ export const OPERATION_LABELS: Record<OperationKind, string> = {
 
 export function defaultParams<K extends OperationKind>(kind: K): OperationParams[K] {
   const defaults: OperationParams = {
-    input: { text: "apple,banana\ncarrot,date", inputType: "lines" },
+    input: { source: "text", text: "apple,banana\ncarrot,date", fileName: "", fileSize: 0, inputType: "lines", delimiter: "," },
     split: { delimiter: ",", useRegex: false },
     enclose: { prefix: '"', suffix: '"' },
     join: { delimiter: "," },
     merge: { delimiter: " ", missingFallback: "" },
-    append: { mode: "newline", text: "" },
+    append: { text: "", scope: "insert", side: "end", line: 0 },
     trim: { mode: "both" },
     replace: { find: "", replaceWith: "", useRegex: false, all: true },
     case: { mode: "upper" },
@@ -70,7 +77,9 @@ export function summarizeNode(data: NodeData<OperationKind>): string {
   switch (data.kind) {
     case "input": {
       const p = data.params as OperationParams["input"];
-      return p.inputType === "lines" ? "Type: Multiple rows" : "Type: Single value";
+      const split = p.inputType === "custom" ? `Split: "${p.delimiter || ","}"` : p.inputType === "single" ? "Single value" : "Split: newline";
+      if (p.source === "file") return p.fileName ? `${p.fileName} · ${split}` : `File · ${split}`;
+      return split;
     }
     case "split": {
       const p = data.params as OperationParams["split"];
@@ -90,7 +99,11 @@ export function summarizeNode(data: NodeData<OperationKind>): string {
     }
     case "append": {
       const p = data.params as OperationParams["append"];
-      return `Mode: ${p.mode === "newline" ? "Next line" : "Inline (end)"}`;
+      const side = p.side === "start" ? "start" : "end";
+      if (p.scope === "all") return `Every row, at ${side}`;
+      if (p.scope === "row") return `Line ${p.line || 1}, at ${side}`;
+      if (p.line > 0) return `Insert ${side === "start" ? "before" : "after"} line ${p.line}`;
+      return side === "start" ? "Insert at start" : "Insert at end";
     }
     case "trim": {
       const p = data.params as OperationParams["trim"];

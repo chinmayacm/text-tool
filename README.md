@@ -1,125 +1,152 @@
-# TextTool - Node-Based Text Processing Environment
+# TextTool
 
-A visual, node-graph text transformation web application modeled after node editors like DaVinci Fusion. Designed for structured text manipulation, string wrangling, row operations, and dataset formatting with real-time lazy previewing.
+TextTool is a browser-based node graph for transforming text and row-oriented data. Connect operations on the canvas, inspect a live preview at each node, and process or download the final output. The app has no backend: projects and uploaded files stay in the browser on your device.
 
-![TextTool Workspace](./public/vite.svg)
+## Start the App
 
----
-
-## 🌟 Key Features
-
-- 🎨 **Fusion-Style Node Canvas**: Drag, connect, move, and organize text operation nodes visually.
-- ⚡ **Lazy Preview Engine**: Real-time evaluation bounded by row/character limits to preserve browser performance when working with large text files.
-- 🚀 **Full Execution Pipeline**: Dedicated Output node with one-click full processing, execution time benchmarks, custom filenames, and one-click copy/download.
-- 🧲 **Smart Canvas Interactions**:
-  - **Snap-Connect**: Dragging connections near input/output handles snaps automatically (`connectionRadius={45}`).
-  - **Drag-to-Splice**: Drop palette nodes or drag existing canvas nodes over connection lines while holding `Ctrl` (Windows/Linux) or `Cmd` (Mac) to automatically insert them between nodes.
-  - **Right-Click Edge Deletion**: Context menu on connection lines removes edges cleanly without interfering with normal left-click selection.
-  - **Key Bindings**: Press `Delete` or `Backspace` to remove selected nodes or connections.
-  - **Live Node Renaming**: Custom labels update instantly across the node header, properties panel, and preview inspector.
-
----
-
-## 🛠️ Available Operation Nodes
-
-| Node | Purpose & Capabilities |
-| :--- | :--- |
-| **Input** | Main entry point. Supports pasting text with options for *Multiple rows (split by newline)* or *Single value (whole text)*. |
-| **Split** | Splits each input row into multiple rows using plain-text or regular expression delimiters. |
-| **Enclose** | Wraps every row individually with a custom prefix and suffix (e.g. `apple` $\to$ `"apple"`). |
-| **Join** | Combines all input rows into a single string using a custom join delimiter (defaults to `,`). |
-| **Merge** | Multi-input node ($A$ & $B$) that merges corresponding rows line-by-line, repeats single-line inputs across all rows, and supports custom missing-row fallbacks. |
-| **Append** | Multi-input or static text node. Appends content either as *Next line* (new rows below) or *At the end* (inline suffix per row). |
-| **Trim** | Strips whitespace from both ends, start-only, or end-only for every row. |
-| **Replace** | Replaces matches using plain-text or regex with support for replace-all or single replacement. |
-| **Case** | Converts text across `UPPER CASE`, `lower case`, `Title Case`, or `Sentence case`. |
-| **Filter** | Filters text rows using exact strings or regular expressions, with optional match inversion (exclusion). |
-| **Output** | Pipeline terminal node featuring **Process Now**, processing time benchmark (ms), output filename config, copy, and download. |
-
----
-
-## 🖥️ Layout & Interface
-
-1. **Node Palette (Left Sidebar)**: Drag operation cards directly onto the canvas.
-2. **Graph Canvas (Center Area)**: Interactive canvas powered by React Flow with pan, zoom, mini-map, and smart node splicing.
-3. **Inspector Panel (Right Sidebar)**:
-   - **Properties Panel (Top)**: Fine-tune selected node parameters, rename nodes, or trigger full output processing.
-   - **Preview Panel (Bottom)**: Live viewer for the selected node output. Automatically toggles between Row Limits (*5, 10, 50, custom, all*) and Character Limits (*100, 500, 1000, custom, all*) based on data shape.
-
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- [Node.js](https://nodejs.org/) (v18+ recommended)
-- `npm` or `yarn`
-
-### Installation
+Requirements: Node.js supported by Vite 8 and npm.
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/TextTool.git
-
-# Navigate to the project directory
-cd TextTool
-
-# Install dependencies
 npm install
-```
-
-### Development Server
-
-Start the local Vite development server with Hot Module Replacement (HMR):
-
-```bash
 npm run dev
 ```
 
-Open `http://localhost:5173` in your browser.
+Open the URL printed by Vite. This project uses the `/text-tool/` base path, so the local address is typically `http://localhost:5173/text-tool/`. If that port is busy, Vite prints a different port.
 
-### Production Build
-
-Typecheck and bundle the project for production deployment:
+To create and preview a production build:
 
 ```bash
 npm run build
-```
-
-Preview the production build locally:
-
-```bash
 npm run preview
 ```
 
----
+## Basic Workflow
 
-## 💡 Workflow Examples
+1. Drag an **Input** node from the left palette onto the canvas.
+2. Add operation nodes and connect them by dragging from a node's right-hand output handle to another node's left-hand input handle.
+3. Select a node to edit its settings in the Properties panel and inspect its result in Preview.
+4. Add an **Output** node at the end of the graph. Click **Process Now** to evaluate the full graph, then copy or download the result.
 
-### Example 1: Enclose Items and Join into a CSV Line
-1. Drag **Input** $\to$ **Enclose** $\to$ **Join** $\to$ **Output**.
-2. Set **Enclose** Prefix/Suffix to `"`.
-3. Set **Join** Delimiter to `, `.
-4. **Input**: `apple\nbanana\ncarrot` $\to$ **Output**: `"apple", "banana", "carrot"`.
+An Input node can feed several operations. Merge and Append can receive two inputs. Output nodes are optional while building a graph: every node has its own preview.
 
-### Example 2: Merge Two Datasets with Delimiters
-1. Drag **Input 1** (IDs) to **Merge** (Handle A).
-2. Drag **Input 2** (Names) to **Merge** (Handle B).
-3. Set **Merge** Delimiter to `: `.
-4. **Output**: `ID_101: Alice`, `ID_102: Bob`.
+## Nodes
 
----
+Select a node to see its settings in the Properties panel. You can rename any node with the **Name** field; the new label is also shown on the canvas and in the preview.
 
-## 🧰 Tech Stack
+### Input
 
-- **Framework**: [React](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/)
-- **Build Tool**: [Vite](https://vitejs.dev/)
-- **Node Graph UI**: [@xyflow/react](https://reactflow.dev/) (React Flow)
-- **State Management**: [Zustand](https://zustand-demo.pmnd.rs/)
-- **Utility**: `nanoid`
+Input is the starting point for text data. Choose **Paste** to type or paste text, or **File** to load a `.txt` or `.csv` file.
 
----
+Choose how the source becomes rows:
 
-## 📄 License
+- **Newline** splits at each line break.
+- **Custom** splits at the literal delimiter you enter. The special strings `\\n` and `\\t` represent a line break and tab. For example, enter `,` to split on commas.
+- **Whole** keeps the entire source as one value.
 
-MIT License. Free for personal and commercial use.
+CSV is handled as text, not by a quote-aware CSV parser. For example, splitting a CSV line on commas will also split commas inside quoted fields. Use **Newline** to keep each record together, then add a Split node to divide its fields if that is appropriate for your data.
+
+File-backed live previews read only a bounded portion of a file: at most 256 KiB, 200 rows, or 8,000 characters, depending on the selected split mode and preview limits. Choosing **All** in Preview does not bypass these file-preview safety caps. **Process Now** reads the complete file and evaluates the graph; large files can therefore require significant device memory.
+
+### Split
+
+Split each input row into multiple rows. Enter a delimiter such as `,` or `|`. Turn on **Treat delimiter as regex** to use a JavaScript regular expression, for example `[,;]` to split on commas or semicolons. With an empty delimiter, rows pass through unchanged.
+
+### Enclose
+
+Add a **Prefix** and **Suffix** to every row. For example, prefix `"` and suffix `"` turns `apple` into `"apple"`.
+
+### Join
+
+Combine all input rows into one row, placing the configured **Delimiter** between them. For example, joining `apple`, `banana`, and `carrot` with `, ` produces `apple, banana, carrot`.
+
+### Merge
+
+Merge two connected inputs row by row. Connect the primary input to handle **A** and the second input to handle **B**. Set the **Join Delimiter** to the text between each pair, and optionally set a **Fallback for missing row**.
+
+If one input contains one row and the other contains several, the single row is repeated for each row of the longer input. Otherwise, the longer input determines the result length and missing values use the fallback.
+
+### Append
+
+Append uses connected **Input A** as the main rows and **Input B** as the added text. If B is not connected or has no rows, it uses the **Static text** field. A non-empty B input takes precedence over static text.
+
+Choose a scope and side:
+
+- **Every row** adds text to the start or end of every existing row. If B has multiple rows, its values are paired by row; rows without a matching B value receive no added text.
+- **One row** adds text to the start or end of the numbered line. Line numbers start at 1.
+- **New rows** inserts the text as separate rows. Static text is split at line breaks. With **Start**, line 0 inserts at the beginning and a positive line number inserts before that line. With **End**, line 0 inserts at the end and a positive line number inserts after that line.
+
+### Trim
+
+Remove whitespace from every row. Choose **Both ends**, **Start only**, or **End only**.
+
+### Replace
+
+Set **Find** and **Replace with** to substitute text in every row. By default, Find is literal text; enable **Treat find as regex** to use a JavaScript regular expression. **Replace all occurrences** is enabled by default. Turn it off to replace only the first match in each row.
+
+### Case
+
+Choose **UPPER CASE**, **lower case**, **Title Case**, or **Sentence case**. Title Case capitalizes the start of each word. Sentence case capitalizes the first word and the first word after `.`, `!`, or `?`.
+
+### Filter
+
+Keep only rows matching **Pattern**, or enable **Treat pattern as regex** to use a JavaScript regular expression. Turn on **Invert (exclude matches)** to remove matching rows instead. An empty pattern leaves all rows unchanged.
+
+### Output
+
+Output marks the end of a graph and provides full processing and export controls:
+
+- **Process Now** reads complete file inputs and evaluates the full graph, then shows the processing time and number of rows.
+- **Output Filename** sets the downloaded filename.
+- **Copy Output** copies the full processed output when available; before processing, it copies the current preview.
+- **Download Output** downloads the full processed output when available; before processing, it downloads the current preview.
+
+## Preview
+
+Select any node to view its output in the Preview panel. For multiple-row results, choose a row limit of 5, 10, 50, a custom number, or All. For a single-row result, choose a character limit of 100, 500, 1,000, a custom number, or All. The preview is intended for quick inspection; use **Process Now** on an Output node to process the entire file-backed graph.
+
+The Preview panel can copy or download the currently displayed preview without running full processing.
+
+## Canvas Controls
+
+- **Add a node:** drag it from the left palette onto the canvas.
+- **Connect nodes:** drag from a source handle on the right of one node to an input handle on the left of another.
+- **Magnetic connect:** slowly drag an existing node over another node, or drag a palette node over one. Wait for the target to glow, then release to connect. For existing nodes, a quick yank cancels the magnetic connection. The node on the left feeds the node on the right.
+- **Insert into an edge:** drop a palette node over a connection line to splice it into that connection. To splice an existing node, hold Ctrl (Windows/Linux) or Cmd (macOS) while dropping it on an edge.
+- **Select multiple nodes:** Ctrl-click (Windows/Linux) or Cmd-click (macOS) to add or remove a node from the selection. Drag on empty canvas to box-select.
+- **Copy and paste nodes:** select one or more nodes, focus the canvas, then press Ctrl+C and Ctrl+V (Cmd+C and Cmd+V on macOS). Copies include connections between selected nodes and are placed with an offset. Text fields keep their normal copy/paste behavior.
+- **Delete:** select nodes or edges and press Delete or Backspace.
+- **Remove one connection:** right-click its edge.
+- **Pan:** scroll, middle-drag, right-drag, or hold Space while dragging.
+- **Zoom and navigation:** use the canvas controls or mouse wheel; the mini-map helps navigate larger graphs.
+
+## Save, Export, and Reset
+
+The latest project is automatically saved in IndexedDB, the browser's local storage database. Autosave includes the graph, node settings, canvas position, preview limits, and uploaded file contents. The Project area in the sidebar shows the save status.
+
+Local autosave is tied to this browser and device. It does not sync to another device, and clearing the browser's site data can remove it.
+
+- **Export project** downloads a `.texttool` archive containing the graph and its uploaded files. Export is a manual backup; the archive does not update when you continue editing.
+- **Open project** loads a `.texttool` archive and replaces the current project and autosave.
+- **Start fresh** asks for confirmation, clears the current graph and attached files, and immediately saves the empty project in place of the previous autosave. Export first if you want to keep a copy.
+
+## Data Policy
+
+TextTool has no application backend. Text, graph data, and uploaded files are processed in the browser and are not uploaded to a TextTool server. Autosave stores the latest project and its files in browser storage on the device. Use **Data policy** at the bottom of the sidebar to view this notice in the app.
+
+## Development
+
+```bash
+npm run dev       # Start Vite
+npm run build     # Typecheck and create a production build
+npm run preview   # Serve the production build locally
+npm run lint      # Lint source files
+```
+
+## Tech Stack
+
+- React and TypeScript
+- Vite
+- `@xyflow/react` for the node graph
+- Zustand for graph state
+- `fflate` for project archive import and export
+- `nanoid` for node and edge identifiers

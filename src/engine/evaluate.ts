@@ -1,6 +1,8 @@
 import type { Edge, Node } from "@xyflow/react";
-import type { NodeData, OperationKind, Rows } from "../types";
+import type { NodeData, OperationKind, OperationParams, Rows } from "../types";
 import { runOperation, type EvaluateOptions } from "./operations";
+
+export type InputRowsById = Map<string, Rows>;
 
 type FlowNode = Node<NodeData<OperationKind>>;
 
@@ -13,7 +15,7 @@ interface IncomingEdge {
 export function evaluateGraph(
   nodes: FlowNode[],
   edges: Edge[],
-  options?: EvaluateOptions
+  options?: EvaluateOptions & { inputRowsById?: InputRowsById }
 ): Map<string, Rows> {
   const outputs = new Map<string, Rows>();
   const incoming = new Map<string, IncomingEdge[]>();
@@ -31,7 +33,7 @@ export function evaluateGraph(
 
   function resolve(id: string): Rows {
     if (outputs.has(id)) return outputs.get(id)!;
-    if (visiting.has(id)) return []; // cycle guard
+    if (visiting.has(id)) return [];
     visiting.add(id);
 
     const node = nodeById.get(id);
@@ -43,14 +45,12 @@ export function evaluateGraph(
     if (node.data.kind === "merge" || node.data.kind === "append") {
       const edgeA = inc.find((e) => e.targetHandle === "a") || inc[0];
       const edgeB = inc.find((e) => e.targetHandle === "b") || (inc[0] === edgeA ? inc[1] : inc[0]);
-
       const inputA = edgeA ? resolve(edgeA.source) : [];
       const inputB = edgeB ? resolve(edgeB.source) : [];
-
-      result = runOperation(node.data, inputA, options, inputB);
+      result = runOperation(node.data, inputA, optionsFor(node, options), inputB);
     } else {
       const input = inc.length > 0 ? resolve(inc[0].source) : [];
-      result = runOperation(node.data, input, options);
+      result = runOperation(node.data, input, optionsFor(node, options));
     }
 
     outputs.set(id, result);
@@ -60,4 +60,14 @@ export function evaluateGraph(
 
   for (const node of nodes) resolve(node.id);
   return outputs;
+}
+
+function optionsFor(
+  node: FlowNode,
+  options?: EvaluateOptions & { inputRowsById?: InputRowsById }
+): EvaluateOptions | undefined {
+  if (node.data.kind !== "input") return options;
+  const params = node.data.params as OperationParams["input"];
+  if (params.source !== "file") return options;
+  return { ...options, fileRows: options?.inputRowsById?.get(node.id) ?? [] };
 }

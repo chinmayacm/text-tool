@@ -1,5 +1,7 @@
+import { useRef, type RefObject } from "react";
+import { formatBytes } from "../engine/textSource";
 import { useGraphStore } from "../store/useGraphStore";
-import type { NodeData } from "../types";
+import type { NodeData, OperationParams } from "../types";
 import "./PropertiesPanel.css";
 
 export function PropertiesPanel() {
@@ -12,14 +14,21 @@ export function PropertiesPanel() {
   const updateNodeParams = useGraphStore((s) => s.updateNodeParams);
   const renameNode = useGraphStore((s) => s.renameNode);
   const processFullGraph = useGraphStore((s) => s.processFullGraph);
+  const attachInputFile = useGraphStore((s) => s.attachInputFile);
+  const clearInputFile = useGraphStore((s) => s.clearInputFile);
+  const isReadingFile = useGraphStore((s) => s.isReadingFile);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const node = nodes.find((n) => n.id === selectedNodeId);
+  const selectedCount = nodes.filter((n) => n.selected).length;
 
   if (!node) {
     return (
       <section className="properties">
         <h2>Properties</h2>
-        <p className="properties__hint">Select a node to edit its settings here.</p>
+        <p className="properties__hint">
+          Select a node to edit its settings. Ctrl-click or drag across nodes to select several, then Ctrl+C and Ctrl+V to copy them.
+        </p>
       </section>
     );
   }
@@ -51,33 +60,24 @@ export function PropertiesPanel() {
   return (
     <section className="properties">
       <h2>Properties</h2>
+      {selectedCount > 1 && (
+        <p className="properties__hint">{selectedCount} nodes selected. Editing the last one. Ctrl+C / Ctrl+V copies the selection.</p>
+      )}
       <label className="properties__name">
         Name
         <input value={data.label} onChange={(e) => renameNode(node.id, e.target.value)} />
       </label>
       <div className="properties__body">
         {kind === "input" && (
-          <>
-            <label>
-              Input type
-              <select
-                value={(data.params as NodeData<"input">["params"]).inputType}
-                onChange={(e) => set({ inputType: e.target.value as "single" | "lines" })}
-              >
-                <option value="lines">Multiple rows (split by newline)</option>
-                <option value="single">Single value (whole text)</option>
-              </select>
-            </label>
-            <label>
-              Text
-              <textarea
-                value={(data.params as NodeData<"input">["params"]).text}
-                onChange={(e) => set({ text: e.target.value })}
-                rows={10}
-                placeholder="Paste text here…"
-              />
-            </label>
-          </>
+          <InputFields
+            nodeId={node.id}
+            params={data.params as NodeData<"input">["params"]}
+            isReadingFile={isReadingFile}
+            fileInputRef={fileInputRef}
+            set={set}
+            attachInputFile={attachInputFile}
+            clearInputFile={clearInputFile}
+          />
         )}
 
         {kind === "split" && (
@@ -158,32 +158,7 @@ export function PropertiesPanel() {
         )}
 
         {kind === "append" && (
-          <>
-            <label>
-              Append Mode
-              <select
-                value={(data.params as NodeData<"append">["params"]).mode}
-                onChange={(e) =>
-                  set({ mode: e.target.value as "newline" | "inline" })
-                }
-              >
-                <option value="newline">Next line (appends as new rows below)</option>
-                <option value="inline">At the end (appends inline to each row/line)</option>
-              </select>
-            </label>
-            <label>
-              Static Append Text (used if Input B not connected)
-              <textarea
-                value={(data.params as NodeData<"append">["params"]).text}
-                onChange={(e) => set({ text: e.target.value })}
-                rows={3}
-                placeholder="Enter static text to append…"
-              />
-            </label>
-            <p className="properties__note">
-              Connect Main Input (A) and Append Data (B), or use the static text box above.
-            </p>
-          </>
+          <AppendFields params={data.params as NodeData<"append">["params"]} set={set} />
         )}
 
         {kind === "trim" && (
@@ -324,5 +299,161 @@ export function PropertiesPanel() {
         )}
       </div>
     </section>
+  );
+}
+function InputFields({
+  nodeId,
+  params,
+  isReadingFile,
+  fileInputRef,
+  set,
+  attachInputFile,
+  clearInputFile,
+}: {
+  nodeId: string;
+  params: OperationParams["input"];
+  isReadingFile: boolean;
+  fileInputRef: RefObject<HTMLInputElement | null>;
+  set: (patch: Partial<OperationParams["input"]>) => void;
+  attachInputFile: (id: string, file: File) => void;
+  clearInputFile: (id: string) => void;
+}) {
+  const source = params.source ?? "text";
+  const inputType = params.inputType ?? "lines";
+  return (
+    <>
+      <div className="properties__segment" role="group" aria-label="Input source">
+        <button type="button" className={source === "text" ? "is-active" : ""} onClick={() => set({ source: "text" })}>
+          Paste
+        </button>
+        <button type="button" className={source === "file" ? "is-active" : ""} onClick={() => set({ source: "file" })}>
+          File
+        </button>
+      </div>
+      <div className="properties__segment" role="group" aria-label="Split mode">
+        <button type="button" className={inputType === "lines" ? "is-active" : ""} onClick={() => set({ inputType: "lines" })}>
+          Newline
+        </button>
+        <button type="button" className={inputType === "custom" ? "is-active" : ""} onClick={() => set({ inputType: "custom" })}>
+          Custom
+        </button>
+        <button type="button" className={inputType === "single" ? "is-active" : ""} onClick={() => set({ inputType: "single" })}>
+          Whole
+        </button>
+      </div>
+      {inputType === "custom" && (
+        <label>
+          Custom split
+          <input
+            value={params.delimiter ?? ""}
+            onChange={(e) => set({ delimiter: e.target.value })}
+            placeholder="e.g. ,  or \\n"
+          />
+        </label>
+      )}
+      {source === "file" ? (
+        <div className="properties__file">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,.txt,text/csv,text/plain"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) attachInputFile(nodeId, file);
+            }}
+          />
+          <button type="button" onClick={() => fileInputRef.current?.click()}>
+            Load CSV or TXT
+          </button>
+          <span className="properties__file-name">
+            {params.fileName ? `${params.fileName} · ${formatBytes(params.fileSize)}` : "No file loaded"}
+          </span>
+          {params.fileName && (
+            <button type="button" className="properties__file-clear" onClick={() => clearInputFile(nodeId)}>
+              Use pasted text instead
+            </button>
+          )}
+          <p className="properties__note">
+            {isReadingFile
+              ? "Reading a preview slice…"
+              : "Preview reads only the limited rows, not the whole file. Process Now reads the full file."}
+          </p>
+        </div>
+      ) : (
+        <label>
+          Text
+          <textarea
+            value={params.text ?? ""}
+            onChange={(e) => set({ text: e.target.value })}
+            rows={10}
+            placeholder="Paste text here…"
+          />
+        </label>
+      )}
+    </>
+  );
+}
+
+function AppendFields({
+  params,
+  set,
+}: {
+  params: OperationParams["append"];
+  set: (patch: Partial<OperationParams["append"]>) => void;
+}) {
+  const scope = params.scope ?? "insert";
+  const side = params.side ?? "end";
+  return (
+    <>
+      <div className="properties__segment" role="group" aria-label="Append scope">
+        <button type="button" className={scope === "all" ? "is-active" : ""} onClick={() => set({ scope: "all" })}>
+          Every row
+        </button>
+        <button type="button" className={scope === "row" ? "is-active" : ""} onClick={() => set({ scope: "row", line: params.line || 1 })}>
+          One row
+        </button>
+        <button type="button" className={scope === "insert" ? "is-active" : ""} onClick={() => set({ scope: "insert" })}>
+          New rows
+        </button>
+      </div>
+      <div className="properties__segment" role="group" aria-label="Append side">
+        <button type="button" className={side === "start" ? "is-active" : ""} onClick={() => set({ side: "start" })}>
+          Start
+        </button>
+        <button type="button" className={side === "end" ? "is-active" : ""} onClick={() => set({ side: "end" })}>
+          End
+        </button>
+      </div>
+      {scope !== "all" && (
+        <label>
+          Line
+          <input
+            type="number"
+            min={scope === "insert" ? 0 : 1}
+            value={params.line ?? 0}
+            onChange={(e) => set({ line: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+          />
+        </label>
+      )}
+      <label>
+        Static text (used if Input B is not connected)
+        <textarea
+          value={params.text ?? ""}
+          onChange={(e) => set({ text: e.target.value })}
+          rows={3}
+          placeholder="Text to append…"
+        />
+      </label>
+      <p className="properties__note">
+        {scope === "all" && side === "start" && "Adds the text to the start of every row."}
+        {scope === "all" && side === "end" && "Adds the text to the end of every row."}
+        {scope === "row" && `Adds the text to the ${side} of line ${params.line || 1} only.`}
+        {scope === "insert" && side === "end" && (params.line > 0 ? `Inserts new rows after line ${params.line}.` : "Inserts new rows after the last line.")}
+        {scope === "insert" && side === "start" && (params.line > 1 ? `Inserts new rows before line ${params.line}.` : "Inserts new rows at the start.")}
+        {" "}Input B overrides the static text.
+      </p>
+    </>
   );
 }

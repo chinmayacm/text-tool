@@ -152,3 +152,55 @@
   color: #6b6b70;
   font-size: 12px;
 }
+
+.properties__segment {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid #35353c;
+  border-radius: 6px;
+  background: #141417;
+}
+
+.properties__segment button {
+  flex: 1;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #b8b8be;
+  font-size: 11px;
+  padding: 6px 4px;
+  cursor: pointer;
+}
+
+.properties__segment button.is-active {
+  background: #3a2a4a;
+  color: #f3e8ff;
+}
+
+.properties__file {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px dashed #45454c;
+  border-radius: 6px;
+  background: #141417;
+}
+
+.properties__file button,
+.properties__file-clear {
+  background: #2a2a2e;
+  border: 1px solid #45454c;
+  color: #e6e6e6;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.properties__file-name {
+  font-size: 12px;
+  color: #e6e6e6;
+  word-break: break-all;
+}
