@@ -1,17 +1,20 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import {
   Background,
   Controls,
   MiniMap,
   ReactFlow,
+  SelectionMode,
   type EdgeMouseHandler,
-  type NodeMouseHandler,
   type OnNodeDrag,
+  type OnSelectionChangeFunc,
+  type Viewport,
   useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useGraphStore, type FlowNode } from "../store/useGraphStore";
 import { OperationNode } from "./nodes/OperationNode";
+import { getPaletteDragKind, setPaletteDragKind } from "./nodeDrag";
 import type { OperationKind } from "../types";
 
 const nodeTypes = {
@@ -30,10 +33,11 @@ const nodeTypes = {
 
 export function Canvas() {
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, setViewport: applyViewport } = useReactFlow();
 
   const nodes = useGraphStore((s) => s.nodes);
   const edges = useGraphStore((s) => s.edges);
+  const viewport = useGraphStore((s) => s.viewport);
   const onNodesChange = useGraphStore((s) => s.onNodesChange);
   const onEdgesChange = useGraphStore((s) => s.onEdgesChange);
   const onConnect = useGraphStore((s) => s.onConnect);
@@ -41,6 +45,25 @@ export function Canvas() {
   const spliceNodeIntoEdge = useGraphStore((s) => s.spliceNodeIntoEdge);
   const removeEdge = useGraphStore((s) => s.removeEdge);
   const setSelectedNode = useGraphStore((s) => s.setSelectedNode);
+  const setSavedViewport = useGraphStore((s) => s.setViewport);
+  const copySelected = useGraphStore((s) => s.copySelected);
+  const pasteSelected = useGraphStore((s) => s.pasteSelected);
+  const connectMagnetically = useGraphStore((s) => s.connectMagnetically);
+  const magnet = useRef<MagnetState>({ x: 0, y: 0, t: 0, targetId: null, since: 0, engaged: false });
+  const lineRef = useRef<SVGLineElement>(null);
+  const dwellTimer = useRef<number | null>(null);
+  const paletteMagnet = useRef<{ targetId: string | null; engaged: boolean; y: number }>({
+    targetId: null,
+    engaged: false,
+    y: 0,
+  });
+  const lastAppliedViewport = useRef<Viewport | null>(viewport);
+
+  useEffect(() => {
+    if (!viewport || lastAppliedViewport.current === viewport) return;
+    lastAppliedViewport.current = viewport;
+    void applyViewport(viewport);
+  }, [viewport, applyViewport]);
 
   /** Finds the edge (if any) rendered directly under or near a viewport point, so dropped nodes can splice into it. */
   function findEdgeIdAtPoint(x: number, y: number): string | undefined {
@@ -61,47 +84,175 @@ export function Canvas() {
     return undefined;
   }
 
+  function clearPaletteMagnet() {
+    if (dwellTimer.current !== null) window.clearTimeout(dwellTimer.current);
+    dwellTimer.current = null;
+    paletteMagnet.current.targetId = null;
+    paletteMagnet.current.engaged = false;
+    setMagnetClass(null);
+    hideMagnetLine(lineRef.current);
+  }
+
   const onDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       const kind = e.dataTransfer.getData("application/texttool-node") as OperationKind;
-      if (!kind) return;
+      if (!kind) {
+        clearPaletteMagnet();
+        setPaletteDragKind(null);
+        return;
+      }
       const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
-      const edgeId = findEdgeIdAtPoint(e.clientX, e.clientY);
-      addNode(kind, position, edgeId);
+      const { targetId, engaged } = paletteMagnet.current;
+      clearPaletteMagnet();
+      setPaletteDragKind(null);
+      const edgeId = engaged ? undefined : findEdgeIdAtPoint(e.clientX, e.clientY);
+      const newNodeId = addNode(kind, position, edgeId);
+      if (engaged && targetId) {
+        connectMagnetically(newNodeId, targetId, position.x, handleAt(targetId, e.clientY), null);
+      }
     },
-    [screenToFlowPosition, addNode]
+    [screenToFlowPosition, addNode, connectMagnetically]
   );
 
-  const onNodeClick: NodeMouseHandler<FlowNode> = useCallback(
-    (_, node) => setSelectedNode(node.id),
+  const onCanvasDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (!getPaletteDragKind()) return;
+    const targetId = findNodeIdAtPoint(e.clientX, e.clientY);
+    if (!targetId) {
+      clearPaletteMagnet();
+      return;
+    }
+    paletteMagnet.current.y = e.clientY;
+    if (paletteMagnet.current.targetId === targetId) return;
+
+    clearPaletteMagnet();
+    paletteMagnet.current.targetId = targetId;
+    const hoverX = e.clientX;
+    const hoverY = e.clientY;
+    dwellTimer.current = window.setTimeout(() => {
+      dwellTimer.current = null;
+      if (paletteMagnet.current.targetId !== targetId) return;
+      paletteMagnet.current.engaged = true;
+      setMagnetClass(targetId);
+      drawMagnetLineToNode(wrapperRef.current, lineRef.current, hoverX, hoverY, targetId);
+    }, DWELL_MS);
+  }, []);
+
+  const onSelectionChange: OnSelectionChangeFunc<FlowNode> = useCallback(
+    ({ nodes: selected }) => setSelectedNode(selected.length ? selected[selected.length - 1].id : null),
     [setSelectedNode]
   );
 
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (isTypingTarget(event.target) || !(event.ctrlKey || event.metaKey) || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "c") {
+        if (hasTextSelection()) return;
+        if (copySelected()) event.preventDefault();
+      } else if (key === "v") {
+        if (pasteSelected()) event.preventDefault();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [copySelected, pasteSelected]);
+
+  const onNodeDragStart: OnNodeDrag<FlowNode> = useCallback((event) => {
+    if (dwellTimer.current !== null) window.clearTimeout(dwellTimer.current);
+    const point = pointerFrom(event);
+    magnet.current = {
+      x: point?.x ?? 0,
+      y: point?.y ?? 0,
+      t: performance.now(),
+      targetId: null,
+      since: 0,
+      engaged: false,
+    };
+  }, []);
+
+  const onNodeDrag: OnNodeDrag<FlowNode> = useCallback((event, node) => {
+    if (event.ctrlKey || event.metaKey) {
+      if (dwellTimer.current !== null) window.clearTimeout(dwellTimer.current);
+      dwellTimer.current = null;
+      clearMagnet(magnet.current, lineRef.current);
+      return;
+    }
+    const point = pointerFrom(event);
+    if (!point) return;
+    const now = performance.now();
+    const dt = Math.max(1, now - magnet.current.t);
+    const speed = Math.hypot(point.x - magnet.current.x, point.y - magnet.current.y) / dt;
+    magnet.current.x = point.x;
+    magnet.current.y = point.y;
+    magnet.current.t = now;
+
+    const under = findOverlappedNodeId(node.id);
+    if (!under || speed > YANK_PX_PER_MS) {
+      if (dwellTimer.current !== null) window.clearTimeout(dwellTimer.current);
+      dwellTimer.current = null;
+      clearMagnet(magnet.current, lineRef.current);
+      return;
+    }
+    if (speed > SLOW_PX_PER_MS) {
+      if (magnet.current.engaged) {
+        if (dwellTimer.current !== null) window.clearTimeout(dwellTimer.current);
+        dwellTimer.current = null;
+        clearMagnet(magnet.current, lineRef.current);
+      } else if (magnet.current.targetId !== under) {
+        magnet.current.targetId = under;
+        magnet.current.since = now;
+      }
+      return;
+    }
+    if (magnet.current.targetId !== under) {
+      if (dwellTimer.current !== null) window.clearTimeout(dwellTimer.current);
+      magnet.current.targetId = under;
+      magnet.current.since = now;
+      magnet.current.engaged = false;
+      setMagnetClass(null);
+      hideMagnetLine(lineRef.current);
+    }
+    if (!magnet.current.engaged && dwellTimer.current === null) {
+      dwellTimer.current = window.setTimeout(() => {
+        dwellTimer.current = null;
+        if (magnet.current.targetId !== under || findOverlappedNodeId(node.id) !== under) return;
+        magnet.current.engaged = true;
+        setMagnetClass(under);
+        drawMagnetLine(wrapperRef.current, lineRef.current, node.id, under);
+      }, DWELL_MS);
+    }
+    if (magnet.current.engaged) drawMagnetLine(wrapperRef.current, lineRef.current, node.id, under);
+  }, []);
+
   const onNodeDragStop: OnNodeDrag<FlowNode> = useCallback(
     (event, node) => {
-      if (event.ctrlKey || event.metaKey) {
-        let clientX = 0;
-        let clientY = 0;
-        if ("clientX" in event) {
-          clientX = event.clientX;
-          clientY = event.clientY;
-        } else if ("touches" in event && event.touches && event.touches[0]) {
-          clientX = event.touches[0].clientX;
-          clientY = event.touches[0].clientY;
-        } else if ("changedTouches" in event && event.changedTouches && event.changedTouches[0]) {
-          clientX = event.changedTouches[0].clientX;
-          clientY = event.changedTouches[0].clientY;
-        }
-        if (clientX || clientY) {
-          const edgeId = findEdgeIdAtPoint(clientX, clientY);
-          if (edgeId) {
-            spliceNodeIntoEdge(node.id, edgeId);
-          }
+      const point = pointerFrom(event);
+      const engaged = magnet.current.engaged;
+      const targetId = magnet.current.targetId;
+      if (dwellTimer.current !== null) window.clearTimeout(dwellTimer.current);
+      dwellTimer.current = null;
+      clearMagnet(magnet.current, lineRef.current);
+
+      if ((event.ctrlKey || event.metaKey) && point) {
+        const edgeId = findEdgeIdAtPoint(point.x, point.y);
+        if (edgeId) {
+          spliceNodeIntoEdge(node.id, edgeId);
+          return;
         }
       }
+      if (engaged && targetId) {
+        connectMagnetically(
+          node.id,
+          targetId,
+          node.position.x,
+          point ? handleAt(targetId, point.y) : null,
+          point ? handleAt(node.id, point.y) : null
+        );
+      }
     },
-    [spliceNodeIntoEdge]
+    [spliceNodeIntoEdge, connectMagnetically]
   );
 
   const onEdgeContextMenu: EdgeMouseHandler = useCallback(
@@ -112,30 +263,175 @@ export function Canvas() {
     [removeEdge]
   );
 
-  const onPaneClick = useCallback(() => setSelectedNode(null), [setSelectedNode]);
-
   return (
-    <div className="canvas" ref={wrapperRef} onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
+    <div
+      className="canvas"
+      ref={wrapperRef}
+      onDrop={onDrop}
+      onDragOver={onCanvasDragOver}
+      onDragLeave={(e) => {
+        if (e.relatedTarget instanceof Node && wrapperRef.current?.contains(e.relatedTarget)) return;
+        clearPaletteMagnet();
+      }}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
-        onNodeClick={onNodeClick}
+        onSelectionChange={onSelectionChange}
+        onMoveEnd={(_, nextViewport) => {
+          lastAppliedViewport.current = nextViewport;
+          setSavedViewport(nextViewport);
+        }}
+        onNodeDragStart={onNodeDragStart}
+        onNodeDrag={onNodeDrag}
         onNodeDragStop={onNodeDragStop}
         onEdgeContextMenu={onEdgeContextMenu}
-        onPaneClick={onPaneClick}
         nodeTypes={nodeTypes}
-        fitView
+        defaultViewport={viewport ?? undefined}
+        fitView={!viewport}
         colorMode="dark"
         connectionRadius={45}
         deleteKeyCode={["Backspace", "Delete"]}
+        multiSelectionKeyCode={["Control", "Meta"]}
+        selectionOnDrag
+        selectionMode={SelectionMode.Partial}
+        panOnScroll
+        panOnDrag={[1, 2]}
+        selectionKeyCode="Shift"
       >
         <Background />
         <Controls />
         <MiniMap />
       </ReactFlow>
+      <svg className="magnet-overlay" aria-hidden="true">
+        <line ref={lineRef} />
+      </svg>
     </div>
   );
+}
+
+const SLOW_PX_PER_MS = 0.4;
+const YANK_PX_PER_MS = 1.05;
+const DWELL_MS = 160;
+
+type MagnetState = {
+  x: number;
+  y: number;
+  t: number;
+  targetId: string | null;
+  since: number;
+  engaged: boolean;
+};
+
+function pointerFrom(event: Parameters<OnNodeDrag<FlowNode>>[0]): { x: number; y: number } | null {
+  if ("clientX" in event) return { x: event.clientX, y: event.clientY };
+  const touch = ("touches" in event && event.touches?.[0]) || ("changedTouches" in event && event.changedTouches?.[0]);
+  return touch ? { x: touch.clientX, y: touch.clientY } : null;
+}
+
+function findOverlappedNodeId(draggedId: string): string | undefined {
+  const dragged = document.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(draggedId)}"]`);
+  if (!dragged) return undefined;
+  const draggedRect = dragged.getBoundingClientRect();
+  let bestId: string | undefined;
+  let bestArea = 0;
+  for (const candidate of document.querySelectorAll<HTMLElement>(".react-flow__node[data-id]")) {
+    const id = candidate.getAttribute("data-id");
+    if (!id || id === draggedId) continue;
+    const rect = candidate.getBoundingClientRect();
+    const width = Math.max(0, Math.min(draggedRect.right, rect.right) - Math.max(draggedRect.left, rect.left));
+    const height = Math.max(0, Math.min(draggedRect.bottom, rect.bottom) - Math.max(draggedRect.top, rect.top));
+    const area = width * height;
+    if (area > bestArea) {
+      bestArea = area;
+      bestId = id;
+    }
+  }
+  return bestId;
+}
+
+function findNodeIdAtPoint(x: number, y: number): string | undefined {
+  for (const el of document.elementsFromPoint(x, y)) {
+    const nodeEl = (el as Element).closest(".react-flow__node");
+    const id = nodeEl?.getAttribute("data-id");
+    if (id) return id;
+  }
+  return undefined;
+}
+
+function handleAt(nodeId: string, clientY: number): string | null {
+  const el = document.querySelector(`.react-flow__node[data-id="${CSS.escape(nodeId)}"]`);
+  if (!el) return "a";
+  const rect = el.getBoundingClientRect();
+  return clientY < rect.top + rect.height / 2 ? "a" : "b";
+}
+
+function setMagnetClass(id: string | null) {
+  document.querySelectorAll(".magnet-target").forEach((el) => el.classList.remove("magnet-target"));
+  if (!id) return;
+  document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"]`)?.classList.add("magnet-target");
+}
+
+function hideMagnetLine(line: SVGLineElement | null) {
+  if (line) line.style.display = "none";
+}
+
+function clearMagnet(state: MagnetState, line: SVGLineElement | null) {
+  state.engaged = false;
+  state.targetId = null;
+  state.since = 0;
+  setMagnetClass(null);
+  hideMagnetLine(line);
+}
+
+function drawMagnetLine(wrapper: HTMLDivElement | null, line: SVGLineElement | null, fromId: string, toId: string) {
+  if (!wrapper || !line) return;
+  const from = nodeCenter(fromId, wrapper);
+  const to = nodeCenter(toId, wrapper);
+  if (!from || !to) return;
+  line.style.display = "block";
+  line.setAttribute("x1", String(from.x));
+  line.setAttribute("y1", String(from.y));
+  line.setAttribute("x2", String(to.x));
+  line.setAttribute("y2", String(to.y));
+}
+
+function drawMagnetLineToNode(
+  wrapper: HTMLDivElement | null,
+  line: SVGLineElement | null,
+  x: number,
+  y: number,
+  toId: string
+) {
+  if (!wrapper || !line) return;
+  const to = nodeCenter(toId, wrapper);
+  if (!to) return;
+  const bounds = wrapper.getBoundingClientRect();
+  line.style.display = "block";
+  line.setAttribute("x1", String(x - bounds.left));
+  line.setAttribute("y1", String(y - bounds.top));
+  line.setAttribute("x2", String(to.x));
+  line.setAttribute("y2", String(to.y));
+}
+
+function nodeCenter(id: string, wrapper: HTMLElement): { x: number; y: number } | null {
+  const el = document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"]`);
+  if (!el) return null;
+  const rect = el.getBoundingClientRect();
+  const bounds = wrapper.getBoundingClientRect();
+  return { x: rect.left + rect.width / 2 - bounds.left, y: rect.top + rect.height / 2 - bounds.top };
+}
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable;
+}
+
+function hasTextSelection(): boolean {
+  const selection = window.getSelection();
+  return Boolean(selection && !selection.isCollapsed && selection.toString().length > 0);
 }

@@ -1,4 +1,6 @@
 import type { NodeData, OperationKind, Rows } from "../types";
+import { applyAppend } from "./append";
+import { splitInputText } from "./textSource";
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -11,6 +13,8 @@ function toRegExp(pattern: string, useRegex: boolean, flags: string): RegExp {
 export interface EvaluateOptions {
   rowLimit?: number;
   charLimit?: number;
+  /** Pre-sliced rows for a file-backed input node. Undefined means "not a file read". */
+  fileRows?: Rows;
 }
 
 export function runOperation(
@@ -22,17 +26,20 @@ export function runOperation(
   let result: Rows = [];
   switch (data.kind) {
     case "input": {
-      const { text, inputType } = data.params as NodeData<"input">["params"];
-      if (inputType === "lines") {
-        const lines = text.split("\n");
-        result = options?.rowLimit && Number.isFinite(options.rowLimit)
-          ? lines.slice(0, options.rowLimit)
-          : lines;
+      const params = data.params as NodeData<"input">["params"];
+      if (params.source === "file") {
+        result = options?.fileRows ?? [];
+        break;
+      }
+      const inputType = params.inputType ?? "lines";
+      if (inputType === "single") {
+        const text = params.text ?? "";
+        result = [
+          options?.charLimit && Number.isFinite(options.charLimit) ? text.slice(0, options.charLimit) : text,
+        ];
       } else {
-        const str = options?.charLimit && Number.isFinite(options.charLimit)
-          ? text.slice(0, options.charLimit)
-          : text;
-        result = [str];
+        const lines = splitInputText(params.text ?? "", { inputType, delimiter: params.delimiter ?? "," });
+        result = options?.rowLimit && Number.isFinite(options.rowLimit) ? lines.slice(0, options.rowLimit) : lines;
       }
       break;
     }
@@ -77,28 +84,7 @@ export function runOperation(
       break;
     }
     case "append": {
-      const { mode, text } = data.params as NodeData<"append">["params"];
-      const inputA = input;
-      const inputB =
-        secondaryInput.length > 0
-          ? secondaryInput
-          : text
-          ? mode === "newline"
-            ? text.split("\n")
-            : [text]
-          : [];
-
-      if (mode === "newline") {
-        result = [...inputA, ...inputB];
-      } else {
-        if (inputA.length === 0) {
-          result = inputB;
-        } else if (inputB.length === 1) {
-          result = inputA.map((row) => `${row}${inputB[0]}`);
-        } else {
-          result = inputA.map((row, i) => `${row}${inputB[i] ?? ""}`);
-        }
-      }
+      result = applyAppend(input, secondaryInput, data.params as NodeData<"append">["params"]);
       break;
     }
     case "trim": {
