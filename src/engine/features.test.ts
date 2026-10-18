@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { applyAppend } from "./append.ts";
-import { runOperation } from "./operations.ts";
+import { evaluateGraph } from "./evaluate.ts";
+import { runOperation, runUnmergeOperation } from "./operations.ts";
 import { readPreviewText, splitInputText } from "./textSource.ts";
 import { planMagneticConnection } from "../store/magnet.ts";
-import { bridgeDeletedNodes } from "../store/useGraphStore.ts";
+import { bridgeDeletedNodes, replaceTargetInputEdge } from "../store/useGraphStore.ts";
 
 test("custom input split keeps the delimiter and decodes escapes", () => {
   assert.deepEqual(splitInputText("a|b|c", { inputType: "custom", delimiter: "|" }), ["a", "b", "c"]);
@@ -94,3 +95,95 @@ test("split does not insert blank rows from trailing delimiters or line breaks",
     ["apple", "banana", "carrot"]
   );
 });
+
+test("single-input nodes replace any existing incoming connection when a new one is made", () => {
+  const nodes = [
+    { id: "in-a", data: { kind: "input" as const } },
+    { id: "in-b", data: { kind: "input" as const } },
+    { id: "split-1", data: { kind: "split" as const } },
+  ];
+  const existingEdges = [{ id: "e1", source: "in-a", target: "split-1", targetHandle: undefined }];
+  const remaining = replaceTargetInputEdge(existingEdges, nodes, "split-1", null);
+  assert.equal(remaining.length, 0);
+});
+
+test("tail preview lazily extracts the last N rows or chars for inline and file inputs", async () => {
+  const lines = Array.from({ length: 100 }, (_, i) => `item-${i}`).join("\n");
+  assert.deepEqual(
+    splitInputText(lines, { inputType: "lines", delimiter: "\n" }, 3, "tail"),
+    ["item-97", "item-98", "item-99"]
+  );
+
+  assert.deepEqual(
+    splitInputText("a,b,c,d,e,", { inputType: "custom", delimiter: "," }, 2, "tail"),
+    ["d", "e"]
+  );
+
+  assert.deepEqual(
+    runOperation(
+      { kind: "input", label: "Input", params: { source: "text", text: "abcdefghij", inputType: "single", delimiter: "," } },
+      [],
+      { charLimit: 4, direction: "tail" }
+    ),
+    ["ghij"]
+  );
+
+  const body = Array.from({ length: 5000 }, (_, i) => `row-${i}`).join("\n");
+  const blob = new Blob([body]);
+  const tailText = await readPreviewText(blob, { inputType: "lines", delimiter: "\n" }, 5, 500, "tail");
+  const tailRows = splitInputText(tailText, { inputType: "lines", delimiter: "\n" }, 5, "tail");
+  assert.deepEqual(tailRows, ["row-4995", "row-4996", "row-4997", "row-4998", "row-4999"]);
+});
+
+test("unmerge splits rows at first or last occurrence into outputs A and B", () => {
+  const rows = ["a:b:c", "x:y", "no-colon"];
+  assert.deepEqual(
+    runUnmergeOperation({ delimiter: ":", occurrence: "first", missingFallback: "N/A" }, rows),
+    {
+      a: ["a", "x", "no-colon"],
+      b: ["b:c", "y", "N/A"],
+    }
+  );
+  assert.deepEqual(
+    runUnmergeOperation({ delimiter: ":", occurrence: "last", missingFallback: "" }, rows),
+    {
+      a: ["a:b", "x", "no-colon"],
+      b: ["c", "y", ""],
+    }
+  );
+
+  const outputs = evaluateGraph(
+    [
+      {
+        id: "in-1",
+        position: { x: 0, y: 0 },
+        data: { kind: "input", label: "Input", params: { source: "text", text: "first second\nalpha beta", fileName: "", fileSize: 0, inputType: "lines", delimiter: "," } },
+      },
+      {
+        id: "unmerge-1",
+        position: { x: 100, y: 0 },
+        data: { kind: "unmerge", label: "Unmerge", params: { delimiter: " ", occurrence: "first", missingFallback: "" } },
+      },
+      {
+        id: "out-a",
+        position: { x: 200, y: -40 },
+        data: { kind: "output", label: "Out A", params: { filename: "a.txt" } },
+      },
+      {
+        id: "out-b",
+        position: { x: 200, y: 40 },
+        data: { kind: "output", label: "Out B", params: { filename: "b.txt" } },
+      },
+    ],
+    [
+      { id: "e1", source: "in-1", target: "unmerge-1" },
+      { id: "e2", source: "unmerge-1", target: "out-a", sourceHandle: "a" },
+      { id: "e3", source: "unmerge-1", target: "out-b", sourceHandle: "b" },
+    ]
+  );
+
+  assert.deepEqual(outputs.get("out-a"), ["first", "alpha"]);
+  assert.deepEqual(outputs.get("out-b"), ["second", "beta"]);
+});
+
+

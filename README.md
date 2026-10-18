@@ -22,8 +22,8 @@ npm run preview
 
 ## Basic Workflow
 
-1. A fresh project starts with an **Input** node connected to an **Output** node—or expand **Templates** in the sidebar to load a ready-made pipeline (**Rows to Quoted List**, **Quoted List to Rows**, **Clean & Filter Lines**, or **Merge Two Lists**).
-2. Drag operation nodes from the **Nodes** section onto the canvas (or drop them directly onto an existing connection line to splice them in). Hover over any node in the sidebar for a moment to see a short description of what it does.
+1. A fresh project starts with an **Input** node connected to an **Output** node—or expand **Templates** in the sidebar to load a ready-made pipeline (**Rows to Quoted List**, **Quoted List to Rows**, **Clean & Filter Lines**, **Merge Two Lists**, or **Unmerge JSON Key-Values**).
+2. Drag operation nodes from the **Nodes** section onto the canvas (or drop them directly onto an existing connection line to splice them in). Nodes in the sidebar are grouped by role (**I/O**, **Structure & Combine**, and **Transform & Filter**), and hovering over any node for a moment shows a short description of what it does.
 3. Select a node to edit its settings in the **Properties** panel (hover the `?` icon in the Properties header for a quick summary of the node type) and inspect its result in **Preview**.
 4. Click **Process Now** on the **Output** node to evaluate the full graph, then copy or download the result.
 
@@ -31,7 +31,7 @@ Each sidebar section (**Project**, **Templates**, **Nodes**) can be minimized or
 
 ## Nodes
 
-Select a node to see its settings in the Properties panel. You can rename any node with the **Name** field; the new label is also shown on the canvas and in the preview.
+Select a node to see its settings in the Properties panel. You can rename any node with the **Name** field; the new label is also shown on the canvas and in the preview. Delimiter, prefix/suffix, and trim character fields also display per-character token pills below the input so spaces, tabs, and special symbols are immediately visible.
 
 ### Input
 
@@ -43,17 +43,13 @@ Choose how the source becomes rows:
 - **Custom** splits at the literal delimiter you enter. The special strings `\\n` and `\\t` represent a line break and tab. For example, enter `,` to split on commas.
 - **Whole** keeps the entire source as one value.
 
-CSV is handled as text, not by a quote-aware CSV parser. For example, splitting a CSV line on commas will also split commas inside quoted fields. Use **Newline** to keep each record together, then add a Split node to divide its fields if that is appropriate for your data.
+CSV is handled as text, not by a quote-aware CSV parser. For example, splitting a CSV line on commas will also split commas inside quoted fields. Use **Newline** to keep each record together, then add a Split or Unmerge node to divide its fields if that is appropriate for your data.
 
-Live previews evaluate lazily up to the active row or character limit. File-backed live previews read only a bounded portion of a file: at most 256 KiB, 200 rows, or 8,000 characters, depending on the selected split mode and preview limits. Choosing **All** in Preview does not bypass these file-preview safety caps. **Process Now** reads the complete file and evaluates the graph; large files can therefore require significant device memory.
+Live previews evaluate lazily up to the active row or character limit (from either the **Head** or **Tail** of the input). File-backed live previews read only a bounded portion of a file: at most 256 KiB, 200 rows, or 8,000 characters, depending on the selected split mode and preview limits. Choosing **All** in Preview does not bypass these file-preview safety caps. **Process Now** reads the complete file and evaluates the graph; large files can therefore require significant device memory.
 
 ### Split
 
-Split each input row into multiple rows. Enter a delimiter such as `,`, `|`, `\\n`, or `\\t`. Turn on **Treat delimiter as regex** to use a JavaScript regular expression, for example `[,;]` to split on commas or semicolons. Empty trailing segments and surrounding line breaks are stripped automatically so splitting multiline or trailing-delimiter values does not insert blank rows. With an empty delimiter, rows pass through unchanged.
-
-### Enclose
-
-Add a **Prefix** and **Suffix** to every row. For example, prefix `"` and suffix `"` turns `apple` into `"apple"`.
+Split each input row into multiple vertical rows. Enter a delimiter such as `,`, `|`, `\\n`, or `\\t`. Turn on **Treat delimiter as regex** to use a JavaScript regular expression, for example `[,;]` to split on commas or semicolons. Empty trailing segments and surrounding line breaks are stripped automatically so splitting multiline or trailing-delimiter values does not insert blank rows. With an empty delimiter, rows pass through unchanged.
 
 ### Join
 
@@ -64,6 +60,16 @@ Combine all input rows into one row, placing the configured **Delimiter** betwee
 Merge two connected inputs row by row. Connect the primary input to the blue **A** handle and the second input to the amber **B** handle (each row inside the node also displays the connected upstream node's name). Set the **Join Delimiter** to the text between each pair, and optionally set a **Fallback for missing row**.
 
 If one input contains one row and the other contains several, the single row is repeated for each row of the longer input. Otherwise, the longer input determines the result length and missing values use the fallback.
+
+### Unmerge
+
+Split each input row horizontally into two parallel outputs—the exact inverse of **Merge**:
+
+- **Output A** (blue **A** handle): receives the text **before** the delimiter for every row.
+- **Output B** (amber **B** handle): receives the remainder of the row **after** the delimiter.
+- **Split at**: choose **First occurrence** or **Last occurrence** of the delimiter.
+- **Fallback for missing delimiter (Output B)**: if a row does not contain the delimiter, Output A keeps the full row and Output B receives this fallback value (blank by default) so row indices remain aligned across both outputs.
+- **Splitting into 3+ columns**: because Output B holds the rest of the row after the first delimiter, you can chain another **Unmerge** node onto Output B to split into three or more columns.
 
 ### Append
 
@@ -77,7 +83,11 @@ Choose a scope and side:
 
 ### Trim
 
-Remove leading and/or trailing whitespace—or custom user-defined symbols—from every row. Choose **Both ends**, **Start only**, or **End only**, and optionally specify **Characters to trim** (for example `'"` or `-_`). Leave **Characters to trim** empty to strip whitespace by default.
+Remove leading and/or trailing whitespace—or custom user-defined symbols—from every row. Choose **Both ends**, **Start only**, or **End only**, and optionally specify **Characters to trim** (for example `{}, ` or `'"`). Any character you type into **Characters to trim** is stripped from the selected ends of each row in a single pass; leave it empty to strip whitespace by default.
+
+### Enclose
+
+Add a **Prefix** and **Suffix** to every row. For example, prefix `"` and suffix `"` turns `apple` into `"apple"`.
 
 ### Replace
 
@@ -102,14 +112,19 @@ Output marks the end of a graph and provides full processing and export controls
 
 ## Preview
 
-Select any node to view its output in the Preview panel. A mode badge next to the node name indicates whether the output is **Multiline (rows)** or **Single line**. For multiple-row results, choose a row limit of 5, 10, 50, a custom number, or All. For a single-row result, choose a character limit of 100, 500, 1,000, a custom number, or All. The preview is intended for quick inspection; use **Process Now** on an Output node to process the entire file-backed graph.
+Select any node to view its output in the Preview panel:
+
+- **Mode badge**: indicates whether the selected node's output is **Multiline (rows)**, **Single line**, or **Empty**.
+- **Output A / Output B toggle**: when an **Unmerge** node is selected, switch between inspecting **Output A** and **Output B**.
+- **Head / Tail & Limit controls**: choose **Head** (first items) or **Tail** (last items), and pick a row limit (`5`, `10`, `50`, `Custom`, or `All rows`) for multiline results or a character limit (`100`, `500`, `1000`, `Custom`, or `All chars`) for single-line results. Both **Head** and **Tail** slices are evaluated lazily from the start or end of the input.
+- **Lazy vs. Full status badge**: the header badge shows **`Lazy`** when a row/character limit is active, switches to **`Full`** when `All` is selected on pasted text, and shows **`Lazy (Cap)`** when `All` is selected with a file input (since live file previews stay capped until **Process Now** is clicked).
 
 The Preview panel can copy or download the currently displayed preview without running full processing.
 
 ## Canvas Controls
 
 - **Add a node:** drag it from the left palette onto the canvas.
-- **Connect nodes & smart handles:** drag from a node's purple output handle (outward triangle `▸`/`▾`/`◂`/`▴`) to another node's blue input handle (inward triangle). Handles automatically snap to the closest side of the node (**Top**, **Right**, **Bottom**, or **Left**) based on the angle to connected nodes, and space themselves along the edge so multiple connections on the same side never overlap.
+- **Connect nodes & smart handles:** drag from a node's output handle (outward triangle `▸`/`▾`/`◂`/`▴`) to another node's input handle (inward triangle). Single-input nodes accept one incoming connection at a time—connecting a new node automatically replaces the previous incoming connection. Handles automatically snap to the closest side of the node (**Top**, **Right**, **Bottom**, or **Left**) based on the angle to connected neighbors, and space themselves along the edge so multiple connections on the same side never overlap.
 - **Magnetic connect:** slowly drag an existing node over another node, or drag a palette node over one. Wait for the target to glow, then release to connect. For existing nodes, a quick yank cancels the magnetic connection. Left feeds right in horizontal layouts, and top feeds bottom in vertical layouts.
 - **Insert into an edge:** drop a palette node over a connection line to splice it into that connection. To splice an existing node, hold Ctrl (Windows/Linux) or Cmd (macOS) while dropping it on an edge.
 - **Select multiple nodes:** Ctrl-click (Windows/Linux) or Cmd-click (macOS) to add or remove a node from the selection. Drag on empty canvas to box-select.
@@ -125,7 +140,7 @@ The latest project is automatically saved in IndexedDB, the browser's local stor
 
 Local autosave is tied to this browser and device. It does not sync to another device, and clearing the browser's site data can remove it.
 
-- **Export project** downloads a `.texttool` archive containing the graph and its uploaded files. Export is a manual backup; the archive does not update when you continue editing.
+- **Export project** opens a dialog where you can enter a custom file name and downloads a `.texttool` archive containing the graph and its uploaded files. Export is a manual backup; the archive does not update when you continue editing.
 - **Open project** loads a `.texttool` archive and replaces the current project and autosave.
 - **Start fresh** asks for confirmation, clears the current graph and attached files, resets the canvas to the default connected **Input → Output** starter nodes, and saves it in place of the previous autosave. Export first if you want to keep a copy.
 

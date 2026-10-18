@@ -1,6 +1,6 @@
 import type { NodeData, OperationKind, Rows } from "../types";
 import { applyAppend } from "./append";
-import { splitInputText } from "./textSource";
+import { splitInputText, type PreviewDirection } from "./textSource";
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -13,6 +13,7 @@ function toRegExp(pattern: string, useRegex: boolean, flags: string): RegExp {
 export interface EvaluateOptions {
   rowLimit?: number;
   charLimit?: number;
+  direction?: PreviewDirection;
   /** Pre-sliced rows for a file-backed input node. Undefined means "not a file read". */
   fileRows?: Rows;
 }
@@ -23,6 +24,7 @@ export function runOperation(
   options?: EvaluateOptions,
   secondaryInput: Rows = []
 ): Rows {
+  const direction = options?.direction ?? "head";
   let result: Rows = [];
   switch (data.kind) {
     case "input": {
@@ -34,14 +36,20 @@ export function runOperation(
       const inputType = params.inputType ?? "lines";
       if (inputType === "single") {
         const text = params.text ?? "";
+        const limit = options?.charLimit && Number.isFinite(options.charLimit) ? options.charLimit : undefined;
         result = [
-          options?.charLimit && Number.isFinite(options.charLimit) ? text.slice(0, options.charLimit) : text,
+          limit && text.length > limit
+            ? direction === "tail"
+              ? text.slice(-limit)
+              : text.slice(0, limit)
+            : text,
         ];
       } else {
         result = splitInputText(
           params.text ?? "",
           { inputType, delimiter: params.delimiter ?? "," },
-          options?.rowLimit
+          options?.rowLimit,
+          direction
         );
       }
       break;
@@ -91,6 +99,9 @@ export function runOperation(
         }
       }
       break;
+    }
+    case "unmerge": {
+      return runUnmergeOperation(data.params as NodeData<"unmerge">["params"], input, options).a;
     }
     case "append": {
       result = applyAppend(input, secondaryInput, data.params as NodeData<"append">["params"]);
@@ -155,8 +166,14 @@ export function runOperation(
       result = input;
   }
 
+  return applyOutputLimits(result, options);
+}
+
+function applyOutputLimits(rows: Rows, options?: EvaluateOptions): Rows {
+  const direction = options?.direction ?? "head";
+  let result = rows;
   if (options?.rowLimit && Number.isFinite(options.rowLimit) && result.length > options.rowLimit) {
-    result = result.slice(0, options.rowLimit);
+    result = direction === "tail" ? result.slice(-options.rowLimit) : result.slice(0, options.rowLimit);
   }
   if (
     options?.charLimit &&
@@ -164,8 +181,43 @@ export function runOperation(
     result.length === 1 &&
     result[0].length > options.charLimit
   ) {
-    result = [result[0].slice(0, options.charLimit)];
+    result = [
+      direction === "tail" ? result[0].slice(-options.charLimit) : result[0].slice(0, options.charLimit),
+    ];
   }
-
   return result;
 }
+
+export function runUnmergeOperation(
+  params: NodeData<"unmerge">["params"],
+  input: Rows,
+  options?: EvaluateOptions
+): { a: Rows; b: Rows } {
+  const effectiveDelimiter = (params.delimiter ?? "").replace(/\\n/g, "\n").replace(/\\t/g, "\t");
+  const occurrence = params.occurrence ?? "first";
+  const missingFallback = params.missingFallback ?? "";
+  const a: Rows = [];
+  const b: Rows = [];
+
+  for (const row of input) {
+    if (!effectiveDelimiter) {
+      a.push(row);
+      b.push(missingFallback);
+      continue;
+    }
+    const idx = occurrence === "last" ? row.lastIndexOf(effectiveDelimiter) : row.indexOf(effectiveDelimiter);
+    if (idx === -1) {
+      a.push(row);
+      b.push(missingFallback);
+    } else {
+      a.push(row.slice(0, idx));
+      b.push(row.slice(idx + effectiveDelimiter.length));
+    }
+  }
+
+  return {
+    a: applyOutputLimits(a, options),
+    b: applyOutputLimits(b, options),
+  };
+}
+

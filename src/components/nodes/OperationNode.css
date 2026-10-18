@@ -64,7 +64,8 @@
 .op-node--input .op-node__header {
   background: #3a5338;
 }
-.op-node--merge .op-node__header {
+.op-node--merge .op-node__header,
+.op-node--unmerge .op-node__header {
   background: #384f53;
 }
 .op-node--append .op-node__header {
@@ -112,7 +113,9 @@
   text-overflow: ellipsis;
 }
 
-.op-node--merge .op-node__summary {
+.op-node--merge .op-node__summary,
+.op-node--unmerge .op-node__summary,
+.op-node--append .op-node__summary {
   padding: 4px 0 0 0;
   border-top: 1px solid #35353c;
   margin-top: 2px;
@@ -134,6 +137,12 @@
   color: #5b9cf6;
 }
 
+.op-node__handle--source {
+  border: 1.5px solid #a78bfa !important;
+  background: #2b2340 !important;
+  color: #c4b5fd;
+}
+
 .op-node__handle--a,
 .op-node__handle--b {
   width: auto !important;
@@ -152,12 +161,6 @@
   border-color: #f59e0b !important;
   background: #2f2415 !important;
   color: #fbbf24;
-}
-
-.op-node__handle--source {
-  border: 1.5px solid #a78bfa !important;
-  background: #2b2340 !important;
-  color: #c4b5fd;
 }
 
 .op-node__handle:hover {

@@ -100,6 +100,10 @@ export function PropertiesPanel() {
                 value={(data.params as NodeData<"split">["params"]).delimiter}
                 onChange={(e) => set({ delimiter: e.target.value })}
               />
+              <CharTokens
+                value={(data.params as NodeData<"split">["params"]).delimiter}
+                recognizeEscapes={!(data.params as NodeData<"split">["params"]).useRegex}
+              />
             </label>
             <label className="properties__checkbox">
               <input
@@ -121,6 +125,7 @@ export function PropertiesPanel() {
                 value={(data.params as NodeData<"enclose">["params"]).prefix}
                 onChange={(e) => set({ prefix: e.target.value })}
               />
+              <CharTokens value={(data.params as NodeData<"enclose">["params"]).prefix} />
             </label>
             <label>
               Suffix
@@ -128,6 +133,7 @@ export function PropertiesPanel() {
                 value={(data.params as NodeData<"enclose">["params"]).suffix}
                 onChange={(e) => set({ suffix: e.target.value })}
               />
+              <CharTokens value={(data.params as NodeData<"enclose">["params"]).suffix} />
             </label>
             <p className="properties__note">Prefix/suffix are applied to every row individually.</p>
           </>
@@ -141,6 +147,7 @@ export function PropertiesPanel() {
                 value={(data.params as NodeData<"join">["params"]).delimiter}
                 onChange={(e) => set({ delimiter: e.target.value })}
               />
+              <CharTokens value={(data.params as NodeData<"join">["params"]).delimiter} />
             </label>
             <p className="properties__note">All input rows are combined into a single output row.</p>
           </>
@@ -154,6 +161,7 @@ export function PropertiesPanel() {
                 value={(data.params as NodeData<"merge">["params"]).delimiter}
                 onChange={(e) => set({ delimiter: e.target.value })}
               />
+              <CharTokens value={(data.params as NodeData<"merge">["params"]).delimiter} />
             </label>
             <label>
               Fallback for missing row
@@ -165,6 +173,41 @@ export function PropertiesPanel() {
             </label>
             <p className="properties__note">
               Connect Input A (top-left) and Input B (bottom-left). Merges corresponding rows, or repeats single-line input across all rows.
+            </p>
+          </>
+        )}
+
+        {kind === "unmerge" && (
+          <>
+            <label>
+              Delimiter
+              <input
+                value={(data.params as NodeData<"unmerge">["params"]).delimiter}
+                onChange={(e) => set({ delimiter: e.target.value })}
+                placeholder="e.g. : or ,"
+              />
+              <CharTokens value={(data.params as NodeData<"unmerge">["params"]).delimiter} recognizeEscapes />
+            </label>
+            <label>
+              Split at
+              <select
+                value={(data.params as NodeData<"unmerge">["params"]).occurrence}
+                onChange={(e) => set({ occurrence: e.target.value as "first" | "last" })}
+              >
+                <option value="first">First occurrence</option>
+                <option value="last">Last occurrence</option>
+              </select>
+            </label>
+            <label>
+              Fallback for missing delimiter (Output B)
+              <input
+                value={(data.params as NodeData<"unmerge">["params"]).missingFallback}
+                onChange={(e) => set({ missingFallback: e.target.value })}
+                placeholder="(leave empty for blank)"
+              />
+            </label>
+            <p className="properties__note">
+              Splits each row into Output A (before delimiter) and Output B (after delimiter). Chain another Unmerge on Output B to split into 3+ columns.
             </p>
           </>
         )}
@@ -187,17 +230,21 @@ export function PropertiesPanel() {
               </select>
             </label>
             <label>
-              Characters to trim
+              Characters to trim (character set)
               <input
                 value={(data.params as NodeData<"trim">["params"]).chars ?? ""}
                 onChange={(e) => set({ chars: e.target.value })}
-                placeholder="Default: whitespace"
+                placeholder="Default: whitespace (or e.g. {}'&quot;)"
+              />
+              <CharTokens
+                value={(data.params as NodeData<"trim">["params"]).chars ?? ""}
+                emptyLabel="␣ whitespace (default)"
               />
             </label>
             <p className="properties__note">
-              Leave empty to trim whitespace, or enter symbols (e.g. <code>&apos;&quot;-</code>) to strip from{" "}
+              Enter multiple symbols at once (e.g. <code>&#123;&#125; </code> or <code>&apos;&quot;-</code>) to strip any of them from{" "}
               {(data.params as NodeData<"trim">["params"]).mode === "both"
-                ? "both ends"
+                ? "both ends in a single Trim node"
                 : `the ${(data.params as NodeData<"trim">["params"]).mode}`}
               .
             </p>
@@ -378,6 +425,7 @@ function InputFields({
             onChange={(e) => set({ delimiter: e.target.value })}
             placeholder="e.g. ,  or \\n"
           />
+          <CharTokens value={params.delimiter ?? ""} recognizeEscapes />
         </label>
       )}
       {source === "file" ? (
@@ -484,5 +532,61 @@ function AppendFields({
         {" "}Input B overrides the static text.
       </p>
     </>
+  );
+}
+
+function CharTokens({
+  value,
+  recognizeEscapes = false,
+  emptyLabel,
+}: {
+  value: string;
+  recognizeEscapes?: boolean;
+  emptyLabel?: string;
+}) {
+  if (!value) {
+    if (!emptyLabel) return null;
+    return (
+      <div className="properties__char-tokens" aria-label="Entered characters">
+        <span className="properties__char-pill properties__char-pill--empty">{emptyLabel}</span>
+      </div>
+    );
+  }
+
+  const tokens: Array<{ display: string; label?: string; kind: "space" | "escape" | "char" }> = [];
+  for (let i = 0; i < value.length; i++) {
+    if (recognizeEscapes && value[i] === "\\" && i + 1 < value.length && (value[i + 1] === "n" || value[i + 1] === "t")) {
+      const next = value[i + 1];
+      tokens.push({
+        display: `\\${next}`,
+        label: next === "n" ? "newline" : "tab",
+        kind: "escape",
+      });
+      i++;
+      continue;
+    }
+    const ch = value[i];
+    if (ch === " ") {
+      tokens.push({ display: "␣", label: "space", kind: "space" });
+    } else if (ch === "\t") {
+      tokens.push({ display: "⇥", label: "tab", kind: "space" });
+    } else {
+      tokens.push({ display: ch, kind: "char" });
+    }
+  }
+
+  return (
+    <div className="properties__char-tokens" aria-label="Entered characters">
+      {tokens.map((token, idx) => (
+        <span
+          key={idx}
+          className={`properties__char-pill properties__char-pill--${token.kind}`}
+          title={token.label ? `Character ${idx + 1}: ${token.label}` : `Character ${idx + 1}: "${token.display}"`}
+        >
+          <code>{token.display}</code>
+          {token.label && <span className="properties__char-pill-label">{token.label}</span>}
+        </span>
+      ))}
+    </div>
   );
 }

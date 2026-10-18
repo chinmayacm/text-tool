@@ -1,7 +1,14 @@
-import { useGraphStore, type PreviewCharLimitMode, type PreviewRowLimitMode } from "../store/useGraphStore";
+import { useState } from "react";
+import {
+  useGraphStore,
+  type PreviewCharLimitMode,
+  type PreviewDirection,
+  type PreviewRowLimitMode,
+} from "../store/useGraphStore";
 import "./PreviewPanel.css";
 
 export function PreviewPanel() {
+  const [outputSlot, setOutputSlot] = useState<"a" | "b">("a");
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
   const nodes = useGraphStore((s) => s.nodes);
   const outputs = useGraphStore((s) => s.outputs);
@@ -10,13 +17,24 @@ export function PreviewPanel() {
   const previewRowCustom = useGraphStore((s) => s.previewRowCustom);
   const previewCharLimitMode = useGraphStore((s) => s.previewCharLimitMode);
   const previewCharCustom = useGraphStore((s) => s.previewCharCustom);
+  const previewDirection = useGraphStore((s) => s.previewDirection);
   const setPreviewRowLimit = useGraphStore((s) => s.setPreviewRowLimit);
   const setPreviewCharLimit = useGraphStore((s) => s.setPreviewCharLimit);
+  const setPreviewDirection = useGraphStore((s) => s.setPreviewDirection);
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId);
-  const rows = selectedNodeId ? outputs.get(selectedNodeId) ?? [] : [];
+  const isUnmerge = selectedNode?.data.kind === "unmerge";
+  const rows = selectedNodeId
+    ? (isUnmerge ? outputs.get(`${selectedNodeId}:${outputSlot}`) : outputs.get(selectedNodeId)) ?? []
+    : [];
 
   const isSingleLine = rows.length <= 1;
+  const isAllSelected = isSingleLine ? previewCharLimitMode === "all" : previewRowLimitMode === "all";
+  const hasFileInput = nodes.some(
+    (n) => n.data.kind === "input" && (n.data.params as { source?: string }).source === "file"
+  );
+  const isLazy = !isAllSelected || hasFileInput;
+  const prefixLabel = previewDirection === "tail" ? "Last" : "First";
 
   function copyToClipboard() {
     navigator.clipboard.writeText(rows.join("\n"));
@@ -25,7 +43,7 @@ export function PreviewPanel() {
   function download() {
     const filename = selectedNode?.data.kind === "output"
       ? (selectedNode.data.params as { filename?: string }).filename || "preview.txt"
-      : `${selectedNode?.data.label || "preview"}.txt`;
+      : `${selectedNode?.data.label || "preview"}${isUnmerge ? `-${outputSlot.toUpperCase()}` : ""}.txt`;
 
     const blob = new Blob([rows.join("\n")], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
@@ -40,7 +58,18 @@ export function PreviewPanel() {
     <aside className="preview">
       <div className="preview__header-row">
         <h2>Preview</h2>
-        <span className="preview__badge">Lazy</span>
+        <span
+          className={`preview__badge ${isLazy ? "" : "preview__badge--full"}`}
+          title={
+            isLazy
+              ? hasFileInput && isAllSelected
+                ? "File preview is capped at 200 rows / 8,000 chars"
+                : `Evaluating ${previewDirection === "tail" ? "last" : "first"} items lazily`
+              : "Evaluating all data eagerly"
+          }
+        >
+          {isLazy ? (hasFileInput && isAllSelected ? "Lazy (Cap)" : "Lazy") : "Full"}
+        </span>
       </div>
 
       {selectedNode ? (
@@ -56,19 +85,47 @@ export function PreviewPanel() {
             </span>
           </div>
 
+          {isUnmerge && (
+            <div className="preview__slot-switch" role="group" aria-label="Preview output port">
+              <button
+                type="button"
+                className={outputSlot === "a" ? "is-active preview__slot-btn--a" : "preview__slot-btn--a"}
+                onClick={() => setOutputSlot("a")}
+              >
+                Output A
+              </button>
+              <button
+                type="button"
+                className={outputSlot === "b" ? "is-active preview__slot-btn--b" : "preview__slot-btn--b"}
+                onClick={() => setOutputSlot("b")}
+              >
+                Output B
+              </button>
+            </div>
+          )}
+
           <div className="preview__limit-controls">
             {!isSingleLine ? (
               <label>
                 Row limit
                 <div className="preview__limit-input-group">
                   <select
+                    value={previewDirection}
+                    disabled={previewRowLimitMode === "all"}
+                    onChange={(e) => setPreviewDirection(e.target.value as PreviewDirection)}
+                    title="Preview slice direction"
+                  >
+                    <option value="head">Head</option>
+                    <option value="tail">Tail</option>
+                  </select>
+                  <select
                     value={previewRowLimitMode}
                     onChange={(e) => setPreviewRowLimit(e.target.value as PreviewRowLimitMode)}
                   >
-                    <option value="5">First 5 rows</option>
-                    <option value="10">First 10 rows</option>
-                    <option value="50">First 50 rows</option>
-                    <option value="custom">Custom rows…</option>
+                    <option value="5">{prefixLabel} 5 rows</option>
+                    <option value="10">{prefixLabel} 10 rows</option>
+                    <option value="50">{prefixLabel} 50 rows</option>
+                    <option value="custom">Custom ({prefixLabel.toLowerCase()})…</option>
                     <option value="all">All rows</option>
                   </select>
                   {previewRowLimitMode === "custom" && (
@@ -86,13 +143,22 @@ export function PreviewPanel() {
                 Char limit
                 <div className="preview__limit-input-group">
                   <select
+                    value={previewDirection}
+                    disabled={previewCharLimitMode === "all"}
+                    onChange={(e) => setPreviewDirection(e.target.value as PreviewDirection)}
+                    title="Preview slice direction"
+                  >
+                    <option value="head">Head</option>
+                    <option value="tail">Tail</option>
+                  </select>
+                  <select
                     value={previewCharLimitMode}
                     onChange={(e) => setPreviewCharLimit(e.target.value as PreviewCharLimitMode)}
                   >
-                    <option value="100">First 100 chars</option>
-                    <option value="500">First 500 chars</option>
-                    <option value="1000">First 1000 chars</option>
-                    <option value="custom">Custom chars…</option>
+                    <option value="100">{prefixLabel} 100 chars</option>
+                    <option value="500">{prefixLabel} 500 chars</option>
+                    <option value="1000">{prefixLabel} 1000 chars</option>
+                    <option value="custom">Custom ({prefixLabel.toLowerCase()})…</option>
                     <option value="all">All chars</option>
                   </select>
                   {previewCharLimitMode === "custom" && (
@@ -110,8 +176,8 @@ export function PreviewPanel() {
 
           <div className="preview__meta">
             {!isSingleLine
-              ? `${rows.length} row(s) loaded`
-              : `${rows[0]?.length ?? 0} char(s) loaded`}
+              ? `${rows.length} row(s) loaded${isLazy ? ` (${previewDirection})` : ""}`
+              : `${rows[0]?.length ?? 0} char(s) loaded${isLazy ? ` (${previewDirection})` : ""}`}
           </div>
 
           <pre className="preview__content">{rows.join("\n") || "(empty)"}</pre>

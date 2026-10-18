@@ -23,6 +23,7 @@ const nodeTypes = {
   enclose: OperationNode,
   join: OperationNode,
   merge: OperationNode,
+  unmerge: OperationNode,
   append: OperationNode,
   trim: OperationNode,
   replace: OperationNode,

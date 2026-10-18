@@ -7,6 +7,7 @@ export type OperationKind =
   | "enclose"
   | "join"
   | "merge"
+  | "unmerge"
   | "append"
   | "trim"
   | "replace"
@@ -27,6 +28,7 @@ export interface OperationParams {
   enclose: { prefix: string; suffix: string };
   join: { delimiter: string };
   merge: { delimiter: string; missingFallback: string };
+  unmerge: { delimiter: string; occurrence: "first" | "last"; missingFallback: string };
   append: { text: string; scope: "all" | "row" | "insert"; side: "start" | "end"; line: number };
   trim: { mode: "both" | "start" | "end"; chars?: string };
   replace: { find: string; replaceWith: string; useRegex: boolean; all: boolean };
@@ -47,6 +49,7 @@ export const OPERATION_LABELS: Record<OperationKind, string> = {
   enclose: "Enclose",
   join: "Join",
   merge: "Merge",
+  unmerge: "Unmerge",
   append: "Append",
   trim: "Trim",
   replace: "Replace",
@@ -61,6 +64,7 @@ export const OPERATION_DESCRIPTIONS: Record<OperationKind, string> = {
   enclose: "Wrap every row with a prefix and suffix.",
   join: "Combine all rows into a single row with a delimiter.",
   merge: "Pair and join rows from two inputs side-by-side.",
+  unmerge: "Split each row at the first or last delimiter into two parallel outputs (A and B).",
   append: "Add text or rows to the start, end, or a specific line.",
   trim: "Remove leading/trailing whitespace or custom symbols from every row.",
   replace: "Find and replace text or regex matches in every row.",
@@ -76,6 +80,7 @@ export function defaultParams<K extends OperationKind>(kind: K): OperationParams
     enclose: { prefix: '"', suffix: '"' },
     join: { delimiter: "," },
     merge: { delimiter: " ", missingFallback: "" },
+    unmerge: { delimiter: " ", occurrence: "first", missingFallback: "" },
     append: { text: "", scope: "insert", side: "end", line: 0 },
     trim: { mode: "both", chars: "" },
     replace: { find: "", replaceWith: "", useRegex: false, all: true },
@@ -110,6 +115,10 @@ export function summarizeNode(data: NodeData<OperationKind>): string {
     case "merge": {
       const p = data.params as OperationParams["merge"];
       return `Delimiter: "${p.delimiter}"`;
+    }
+    case "unmerge": {
+      const p = data.params as OperationParams["unmerge"];
+      return `Delimiter: "${p.delimiter}" (${p.occurrence})`;
     }
     case "append": {
       const p = data.params as OperationParams["append"];

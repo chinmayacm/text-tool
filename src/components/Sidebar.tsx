@@ -11,18 +11,22 @@ import type { ProjectSaveStatus } from "../store/useProjectPersistence";
 import { setPaletteDragKind } from "./nodeDrag";
 import "./Sidebar.css";
 
-const KINDS: OperationKind[] = [
-  "input",
-  "split",
-  "enclose",
-  "join",
-  "merge",
-  "append",
-  "trim",
-  "replace",
-  "case",
-  "filter",
-  "output",
+const NODE_GROUPS: Array<{ label: string; group: string; kinds: OperationKind[] }> = [
+  {
+    label: "I/O",
+    group: "io",
+    kinds: ["input", "output"],
+  },
+  {
+    label: "Structure & Combine",
+    group: "structure",
+    kinds: ["split", "join", "merge", "unmerge", "append"],
+  },
+  {
+    label: "Transform & Filter",
+    group: "transform",
+    kinds: ["trim", "enclose", "replace", "case", "filter"],
+  },
 ];
 
 export function Sidebar({
@@ -33,12 +37,17 @@ export function Sidebar({
   onStartFresh: () => Promise<void>;
 }) {
   const policyDialogRef = useRef<HTMLDialogElement>(null);
+  const exportDialogRef = useRef<HTMLDialogElement>(null);
+  const exportInputRef = useRef<HTMLInputElement>(null);
   const projectFileRef = useRef<HTMLInputElement>(null);
   const hoverTimerRef = useRef<number | null>(null);
   const restoreProject = useGraphStore((state) => state.restoreProject);
   const applyTemplate = useGraphStore((state) => state.applyTemplate);
   const nodeCount = useGraphStore((state) => state.nodes.length);
   const [projectError, setProjectError] = useState("");
+  const [exportFilename, setExportFilename] = useState(
+    () => `texttool-project-${new Date().toISOString().slice(0, 10)}`
+  );
   const [projectOpen, setProjectOpen] = useState(true);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [nodesOpen, setNodesOpen] = useState(true);
@@ -78,17 +87,32 @@ export function Sidebar({
     e.dataTransfer.effectAllowed = "move";
   }
 
-  async function exportProject() {
+  function openExportDialog() {
     setProjectError("");
+    if (!exportFilename.trim()) {
+      setExportFilename(`texttool-project-${new Date().toISOString().slice(0, 10)}`);
+    }
+    exportDialogRef.current?.showModal();
+    window.setTimeout(() => {
+      exportInputRef.current?.focus();
+      exportInputRef.current?.select();
+    }, 0);
+  }
+
+  async function exportProject(rawName: string) {
+    setProjectError("");
+    const trimmed = rawName.trim() || `texttool-project-${new Date().toISOString().slice(0, 10)}`;
+    const finalName = trimmed.toLowerCase().endsWith(".texttool") ? trimmed : `${trimmed}.texttool`;
     try {
       const snapshot = createProjectSnapshot(useGraphStore.getState());
       const blob = await createProjectArchive(snapshot);
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `texttool-project-${new Date().toISOString().slice(0, 10)}.texttool`;
+      link.download = finalName;
       link.click();
       URL.revokeObjectURL(url);
+      exportDialogRef.current?.close();
     } catch {
       setProjectError("Could not export the project.");
     }
@@ -99,6 +123,8 @@ export function Sidebar({
     try {
       const project = await readProjectArchive(file);
       restoreProject(project);
+      const baseName = file.name.replace(/\.texttool$/i, "").trim();
+      if (baseName) setExportFilename(baseName);
     } catch (error) {
       setProjectError(error instanceof Error ? error.message : "Could not open this project.");
     }
@@ -125,7 +151,7 @@ export function Sidebar({
               {saveStatus === "saved" && "Autosaved on this device"}
               {saveStatus === "error" && "Local save unavailable"}
             </p>
-            <button type="button" className="sidebar__project-button" onClick={() => void exportProject()}>
+            <button type="button" className="sidebar__project-button" onClick={openExportDialog}>
               Export project
             </button>
             <button type="button" className="sidebar__project-button" onClick={() => projectFileRef.current?.click()}>
@@ -136,6 +162,7 @@ export function Sidebar({
               className="sidebar__project-button sidebar__project-button--destructive"
               onClick={() => {
                 if (window.confirm("Start a fresh project? This replaces your current autosaved work. Export a copy first if you want to keep it.")) {
+                  setExportFilename(`texttool-project-${new Date().toISOString().slice(0, 10)}`);
                   void onStartFresh();
                 }
               }}
@@ -177,7 +204,10 @@ export function Sidebar({
                 key={template.id}
                 type="button"
                 className="sidebar__template-button"
-                onClick={() => applyTemplate(template.id)}
+                onClick={() => {
+                  applyTemplate(template.id);
+                  setExportFilename(template.id);
+                }}
               >
                 <span className="sidebar__template-name">{template.name}</span>
                 <span className="sidebar__template-desc">{template.description}</span>
@@ -200,17 +230,22 @@ export function Sidebar({
         {nodesOpen && (
           <div className="sidebar__section-body">
             <p className="sidebar__hint">Drag onto the canvas</p>
-            {KINDS.map((kind) => (
-              <div
-                key={kind}
-                className="sidebar__item"
-                draggable
-                onMouseEnter={(e) => onItemMouseEnter(e, kind)}
-                onMouseLeave={clearHoverTooltip}
-                onDragStart={(e) => onDragStart(e, kind)}
-                onDragEnd={() => setPaletteDragKind(null)}
-              >
-                {OPERATION_LABELS[kind]}
+            {NODE_GROUPS.map((section) => (
+              <div key={section.group} className="sidebar__node-group">
+                <div className="sidebar__group-label">{section.label}</div>
+                {section.kinds.map((kind) => (
+                  <div
+                    key={kind}
+                    className={`sidebar__item sidebar__item--${section.group} sidebar__item--${kind}`}
+                    draggable
+                    onMouseEnter={(e) => onItemMouseEnter(e, kind)}
+                    onMouseLeave={clearHoverTooltip}
+                    onDragStart={(e) => onDragStart(e, kind)}
+                    onDragEnd={() => setPaletteDragKind(null)}
+                  >
+                    {OPERATION_LABELS[kind]}
+                  </div>
+                ))}
               </div>
             ))}
           </div>
@@ -238,6 +273,47 @@ export function Sidebar({
           Data policy
         </button>
       </div>
+      <dialog
+        ref={exportDialogRef}
+        className="data-policy export-dialog"
+        aria-labelledby="export-dialog-title"
+        onClick={(event) => {
+          if (event.target === event.currentTarget) exportDialogRef.current?.close();
+        }}
+      >
+        <form
+          className="data-policy__content"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void exportProject(exportFilename);
+          }}
+        >
+          <h2 id="export-dialog-title">Export project</h2>
+          <p>Choose a file name for your exported project archive:</p>
+          <div className="export-dialog__input-row">
+            <input
+              ref={exportInputRef}
+              type="text"
+              className="export-dialog__input"
+              value={exportFilename}
+              onChange={(e) => setExportFilename(e.target.value)}
+              placeholder="texttool-project"
+              aria-label="Project file name"
+            />
+            <span className="export-dialog__ext">.texttool</span>
+          </div>
+          <div className="export-dialog__actions">
+            <button
+              type="button"
+              className="export-dialog__cancel"
+              onClick={() => exportDialogRef.current?.close()}
+            >
+              Cancel
+            </button>
+            <button type="submit">Save file</button>
+          </div>
+        </form>
+      </dialog>
       <dialog
         ref={policyDialogRef}
         className="data-policy"

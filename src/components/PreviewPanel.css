@@ -35,6 +35,12 @@
   border: 1px solid #5c552a;
 }
 
+.preview__badge--full {
+  background: rgba(16, 185, 129, 0.16);
+  color: #6ee7b7;
+  border-color: rgba(52, 211, 153, 0.4);
+}
+
 .preview__node-row {
   display: flex;
   align-items: center;
@@ -73,6 +79,36 @@
   background: rgba(146, 64, 14, 0.2);
 }
 
+.preview__slot-switch {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.preview__slot-switch button {
+  flex: 1;
+  background: #1e1e22;
+  border: 1px solid #45454c;
+  color: #b8b8be;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.preview__slot-btn--a.is-active {
+  border-color: #5b9cf6;
+  background: #1a2436;
+  color: #7ab3ff;
+}
+
+.preview__slot-btn--b.is-active {
+  border-color: #f59e0b;
+  background: #2f2415;
+  color: #fbbf24;
+}
+
 .preview__limit-controls {
   margin-bottom: 8px;
 }
@@ -98,6 +134,11 @@
   border-radius: 4px;
   padding: 4px 6px;
   font-size: 12px;
+}
+
+.preview__limit-input-group select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .preview__limit-input-group input {

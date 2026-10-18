@@ -16,6 +16,7 @@ export type MagnetEdge = {
 export type MagneticLink = {
   source: string;
   target: string;
+  sourceHandle?: string | null;
   targetHandle: string | null;
 };
 
@@ -46,6 +47,10 @@ export function planMagneticConnection(
   const targetHandle = dest.kind === "merge" || dest.kind === "append"
     ? ((dest.id === hovered.id ? hoveredHandle : draggedHandle) ?? "a")
     : null;
+  if (source.kind === "unmerge") {
+    const sourceHandle = (source.id === hovered.id ? hoveredHandle : draggedHandle) ?? "a";
+    return { source: source.id, target: dest.id, sourceHandle, targetHandle };
+  }
   return { source: source.id, target: dest.id, targetHandle };
 }
 

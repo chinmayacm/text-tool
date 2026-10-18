@@ -1,6 +1,6 @@
 import type { Edge, Node } from "@xyflow/react";
 import type { NodeData, OperationKind, OperationParams, Rows } from "../types";
-import { runOperation, type EvaluateOptions } from "./operations";
+import { runOperation, runUnmergeOperation, type EvaluateOptions } from "./operations";
 
 export type InputRowsById = Map<string, Rows>;
 
@@ -8,6 +8,7 @@ type FlowNode = Node<NodeData<OperationKind>>;
 
 interface IncomingEdge {
   source: string;
+  sourceHandle: string | null;
   targetHandle: string | null;
 }
 
@@ -24,12 +25,23 @@ export function evaluateGraph(
     if (!incoming.has(edge.target)) continue;
     incoming.get(edge.target)!.push({
       source: edge.source,
+      sourceHandle: edge.sourceHandle ?? null,
       targetHandle: edge.targetHandle ?? null,
     });
   }
 
   const visiting = new Set<string>();
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
+
+  function resolveEdge(edge: IncomingEdge | undefined): Rows {
+    if (!edge) return [];
+    const primary = resolve(edge.source);
+    const sourceNode = nodeById.get(edge.source);
+    if (sourceNode?.data.kind === "unmerge" && edge.sourceHandle === "b") {
+      return outputs.get(`${edge.source}:b`) ?? [];
+    }
+    return primary;
+  }
 
   function resolve(id: string): Rows {
     if (outputs.has(id)) return outputs.get(id)!;
@@ -45,11 +57,21 @@ export function evaluateGraph(
     if (node.data.kind === "merge" || node.data.kind === "append") {
       const edgeA = inc.find((e) => e.targetHandle === "a") || inc[0];
       const edgeB = inc.find((e) => e.targetHandle === "b") || (inc[0] === edgeA ? inc[1] : inc[0]);
-      const inputA = edgeA ? resolve(edgeA.source) : [];
-      const inputB = edgeB ? resolve(edgeB.source) : [];
+      const inputA = resolveEdge(edgeA);
+      const inputB = resolveEdge(edgeB);
       result = runOperation(node.data, inputA, optionsFor(node, options), inputB);
+    } else if (node.data.kind === "unmerge") {
+      const input = inc.length > 0 ? resolveEdge(inc[0]) : [];
+      const { a, b } = runUnmergeOperation(
+        node.data.params as OperationParams["unmerge"],
+        input,
+        optionsFor(node, options)
+      );
+      outputs.set(`${id}:a`, a);
+      outputs.set(`${id}:b`, b);
+      result = a;
     } else {
-      const input = inc.length > 0 ? resolve(inc[0].source) : [];
+      const input = inc.length > 0 ? resolveEdge(inc[0]) : [];
       result = runOperation(node.data, input, optionsFor(node, options));
     }
 

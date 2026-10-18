@@ -327,5 +327,77 @@ export const GRAPH_TEMPLATES: GraphTemplate[] = [
       ],
     }),
   },
+  {
+    id: "unmerge-json-key-values",
+    name: "Unmerge JSON Key-Values",
+    description: "Trim ({}, ) → Unmerge (:) → Keys & Values",
+    createGraph: () => ({
+      nodes: [
+        {
+          id: "tpl-input",
+          type: "input",
+          position: { x: 80, y: 220 },
+          data: {
+            kind: "input",
+            label: "Input",
+            params: {
+              ...defaultParams("input"),
+              source: "text",
+              text: '{"apple":"banana",\n"carrot":"date",\n"dog":"man" }',
+              inputType: "lines",
+              delimiter: ",",
+            },
+          },
+        },
+        {
+          id: "tpl-trim-braces",
+          type: "trim",
+          position: { x: 340, y: 220 },
+          data: {
+            kind: "trim",
+            label: "Trim { } ,",
+            params: { mode: "both", chars: "{}, " },
+          },
+        },
+        {
+          id: "tpl-unmerge",
+          type: "unmerge",
+          position: { x: 600, y: 205 },
+          data: {
+            kind: "unmerge",
+            label: "Unmerge",
+            params: { delimiter: ":", occurrence: "first", missingFallback: "" },
+          },
+        },
+        {
+          id: "tpl-output-keys",
+          type: "output",
+          position: { x: 880, y: 130 },
+          data: {
+            kind: "output",
+            label: "Keys Output",
+            params: { filename: "keys.txt" },
+          },
+        },
+        {
+          id: "tpl-output-values",
+          type: "output",
+          position: { x: 880, y: 290 },
+          data: {
+            kind: "output",
+            label: "Values Output",
+            params: { filename: "values.txt" },
+          },
+        },
+      ],
+      edges: [
+        { id: "e-1", source: "tpl-input", target: "tpl-trim-braces", sourceHandle: null, targetHandle: null },
+        { id: "e-2", source: "tpl-trim-braces", target: "tpl-unmerge", sourceHandle: null, targetHandle: null },
+        { id: "e-3a", source: "tpl-unmerge", target: "tpl-output-keys", sourceHandle: "a", targetHandle: null },
+        { id: "e-3b", source: "tpl-unmerge", target: "tpl-output-values", sourceHandle: "b", targetHandle: null },
+      ],
+    }),
+  },
 ];
+
 

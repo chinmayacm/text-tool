@@ -5,6 +5,7 @@ export const FILE_PREVIEW_CHAR_CAP = 8_000;
 export const FILE_PREVIEW_BYTE_CAP = 256 * 1024;
 
 export type InputParams = OperationParams["input"];
+export type PreviewDirection = "head" | "tail";
 
 /** Turns user-typed escapes into real newline and tab characters. */
 export function decodeDelimiter(raw: string): string {
@@ -23,13 +24,31 @@ export function inputDelimiter(params: Pick<InputParams, "inputType" | "delimite
 export function splitInputText(
   text: string,
   params: Pick<InputParams, "inputType" | "delimiter">,
-  maxRows?: number
+  maxRows?: number,
+  direction: PreviewDirection = "head"
 ): Rows {
   const delimiter = inputDelimiter(params);
   if (delimiter == null) return [text];
   const limit = maxRows && Number.isFinite(maxRows) ? Math.max(1, maxRows) : undefined;
 
   if (params.inputType === "custom" && delimiter !== "\n") {
+    if (direction === "tail" && limit) {
+      const rows: Rows = [];
+      let end = text.length;
+      while (end >= 0 && rows.length < limit) {
+        const searchFrom = end - delimiter.length;
+        const idx = searchFrom >= 0 ? text.lastIndexOf(delimiter, searchFrom) : -1;
+        const raw = idx === -1 ? text.slice(0, end) : text.slice(idx + delimiter.length, end);
+        const part = raw.replace(/^\r?\n+|\r?\n+$/g, "");
+        if (part.length > 0) {
+          rows.push(part);
+        }
+        if (idx === -1) break;
+        end = idx;
+      }
+      return rows.reverse();
+    }
+
     const rows: Rows = [];
     let start = 0;
     while (start <= text.length) {
@@ -47,6 +66,22 @@ export function splitInputText(
   }
 
   if (!limit) return text.split(/\r?\n/);
+
+  if (direction === "tail") {
+    const rows: Rows = [];
+    let end = text.length;
+    while (end >= 0 && rows.length < limit) {
+      const nlIdx = end > 0 ? text.lastIndexOf("\n", end - 1) : -1;
+      const lineEnd = end > 0 && text.charCodeAt(end - 1) === 13 ? end - 1 : end;
+      if (nlIdx === -1) {
+        rows.push(text.slice(0, lineEnd));
+        break;
+      }
+      rows.push(text.slice(nlIdx + 1, lineEnd));
+      end = nlIdx;
+    }
+    return rows.reverse();
+  }
 
   const rows: Rows = [];
   let start = 0;
@@ -78,11 +113,30 @@ export async function readPreviewText(
   file: Blob,
   params: Pick<InputParams, "inputType" | "delimiter">,
   rowLimit: number | undefined,
-  charLimit: number | undefined
+  charLimit: number | undefined,
+  direction: PreviewDirection = "head"
 ): Promise<string> {
   const delimiter = inputDelimiter(params);
   const maxRows = Math.min(rowLimit ?? FILE_PREVIEW_ROW_CAP, FILE_PREVIEW_ROW_CAP);
   const maxChars = Math.min(charLimit ?? FILE_PREVIEW_CHAR_CAP, FILE_PREVIEW_CHAR_CAP);
+
+  if (direction === "tail") {
+    const startOffset = Math.max(0, file.size - FILE_PREVIEW_BYTE_CAP);
+    const tailSlice = file.slice(startOffset, file.size);
+    let text = await tailSlice.text();
+    if (delimiter == null) {
+      return text.length > maxChars ? text.slice(-maxChars) : text;
+    }
+    if (startOffset > 0) {
+      const firstDelim = text.indexOf(delimiter);
+      if (firstDelim !== -1) {
+        text = text.slice(firstDelim + delimiter.length);
+      }
+    }
+    const parts = text.split(delimiter);
+    return parts.slice(-maxRows).join(delimiter);
+  }
+
   const reader = file.stream().getReader();
   const decoder = new TextDecoder();
   let text = "";

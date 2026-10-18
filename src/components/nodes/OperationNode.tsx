@@ -55,17 +55,13 @@ function computeHandleLayoutKey(nodeId: string, kind: OperationKind, nodes: Flow
     return { dx: c.x - selfCenter.x, dy: c.y - selfCenter.y, x: c.x, y: c.y };
   };
 
-  const outgoing = edges.filter((e) => e.source === nodeId);
-  let sourcePos: Position = Position.Right;
-  let sourceNeighborX = selfCenter.x + 200;
-  let sourceNeighborY = selfCenter.y;
-  if (outgoing.length > 0) {
+  const averageTargetVector = (edgeList: Edge[]): { dx: number; dy: number; x: number; y: number } | null => {
     let sumDx = 0;
     let sumDy = 0;
     let sumX = 0;
     let sumY = 0;
     let count = 0;
-    for (const edge of outgoing) {
+    for (const edge of edgeList) {
       const target = byId.get(edge.target);
       if (!target) continue;
       const c = nodeCenter(target);
@@ -75,12 +71,15 @@ function computeHandleLayoutKey(nodeId: string, kind: OperationKind, nodes: Flow
       sumY += c.y;
       count++;
     }
-    if (count > 0) {
-      sourcePos = snapVectorToSide(sumDx / count, sumDy / count);
-      sourceNeighborX = sumX / count;
-      sourceNeighborY = sumY / count;
-    }
-  }
+    if (count === 0) return null;
+    return { dx: sumDx / count, dy: sumDy / count, x: sumX / count, y: sumY / count };
+  };
+
+  const outgoing = edges.filter((e) => e.source === nodeId);
+  const avgOut = averageTargetVector(outgoing);
+  let sourcePos: Position = avgOut ? snapVectorToSide(avgOut.dx, avgOut.dy) : Position.Right;
+  const sourceNeighborX = avgOut ? avgOut.x : selfCenter.x + 200;
+  const sourceNeighborY = avgOut ? avgOut.y : selfCenter.y;
 
   type RawItem = {
     id: HandleId;
@@ -122,6 +121,42 @@ function computeHandleLayoutKey(nodeId: string, kind: OperationKind, nodes: Flow
       side: sourcePos,
       sortX: sourceNeighborX,
       sortY: sourceNeighborY,
+      order: 2,
+    });
+  } else if (kind === "unmerge") {
+    const incoming = edges.find((e) => e.target === nodeId);
+    const vecIn = neighborVector(incoming?.source);
+    const outA = edges.filter((e) => e.source === nodeId && (e.sourceHandle === "a" || !e.sourceHandle));
+    const outB = edges.filter((e) => e.source === nodeId && e.sourceHandle === "b");
+    const vecOutA = averageTargetVector(outA);
+    const vecOutB = averageTargetVector(outB);
+
+    let targetPos: Position = vecIn ? snapVectorToSide(vecIn.dx, vecIn.dy) : Position.Left;
+    const defaultSourceSide = targetPos === Position.Right ? Position.Left : Position.Right;
+    const sideA = vecOutA ? snapVectorToSide(vecOutA.dx, vecOutA.dy) : defaultSourceSide;
+    const sideB = vecOutB ? snapVectorToSide(vecOutB.dx, vecOutB.dy) : defaultSourceSide;
+    if (!vecIn && (sideA === Position.Left || sideB === Position.Left)) {
+      targetPos = Position.Right;
+    }
+    items.push({
+      id: "target",
+      side: targetPos,
+      sortX: vecIn?.x ?? selfCenter.x - 50,
+      sortY: vecIn?.y ?? selfCenter.y,
+      order: 0,
+    });
+    items.push({
+      id: "a",
+      side: sideA,
+      sortX: vecOutA?.x ?? selfCenter.x + 50,
+      sortY: vecOutA?.y ?? selfCenter.y - 20,
+      order: 1,
+    });
+    items.push({
+      id: "b",
+      side: sideB,
+      sortX: vecOutB?.x ?? selfCenter.x + 50,
+      sortY: vecOutB?.y ?? selfCenter.y + 20,
       order: 2,
     });
   } else {
@@ -170,8 +205,8 @@ function computeHandleLayoutKey(nodeId: string, kind: OperationKind, nodes: Flow
     const isHorizontalEdge = side === Position.Top || side === Position.Bottom;
     if (
       !isHorizontalEdge &&
-      (kind === "merge" || kind === "append") &&
-      !group.some((item) => item.id === "source")
+      (((kind === "merge" || kind === "append") && !group.some((item) => item.id === "source")) ||
+        (kind === "unmerge" && !group.some((item) => item.id === "target")))
     ) {
       for (const item of group) {
         offsets.set(item.id, item.id === "a" ? "48px" : "70px");
@@ -202,10 +237,11 @@ function computeHandleLayoutKey(nodeId: string, kind: OperationKind, nodes: Flow
     return `${id}:${side}:${offset}`;
   };
 
+  const defaultDualSide = kind === "unmerge" ? Position.Right : Position.Left;
   return [
     lookup("target", Position.Left),
-    lookup("a", Position.Left),
-    lookup("b", Position.Left),
+    lookup("a", defaultDualSide),
+    lookup("b", defaultDualSide),
     lookup("source", Position.Right),
   ].join("|");
 }
@@ -263,15 +299,24 @@ export function OperationNode({ id, data, selected }: Props) {
   const handleLayoutKey = useGraphStore((s) => computeHandleLayoutKey(id, kind, s.nodes, s.edges));
   const layout = parseHandleLayout(handleLayoutKey);
 
-  const mergeSourcesKey = useGraphStore((s) => {
-    if (kind !== "merge" && kind !== "append") return "|";
-    const edgeA = s.edges.find((e) => e.target === id && (e.targetHandle === "a" || !e.targetHandle));
-    const edgeB = s.edges.find((e) => e.target === id && e.targetHandle === "b");
-    const labelA = edgeA ? (s.nodes.find((n) => n.id === edgeA.source)?.data.label ?? "") : "";
-    const labelB = edgeB ? (s.nodes.find((n) => n.id === edgeB.source)?.data.label ?? "") : "";
-    return `${labelA}|${labelB}`;
+  const dualSlotLabelsKey = useGraphStore((s) => {
+    if (kind === "merge" || kind === "append") {
+      const edgeA = s.edges.find((e) => e.target === id && (e.targetHandle === "a" || !e.targetHandle));
+      const edgeB = s.edges.find((e) => e.target === id && e.targetHandle === "b");
+      const labelA = edgeA ? (s.nodes.find((n) => n.id === edgeA.source)?.data.label ?? "") : "";
+      const labelB = edgeB ? (s.nodes.find((n) => n.id === edgeB.source)?.data.label ?? "") : "";
+      return `${labelA}|${labelB}`;
+    }
+    if (kind === "unmerge") {
+      const edgeA = s.edges.find((e) => e.source === id && (e.sourceHandle === "a" || !e.sourceHandle));
+      const edgeB = s.edges.find((e) => e.source === id && e.sourceHandle === "b");
+      const labelA = edgeA ? (s.nodes.find((n) => n.id === edgeA.target)?.data.label ?? "") : "";
+      const labelB = edgeB ? (s.nodes.find((n) => n.id === edgeB.target)?.data.label ?? "") : "";
+      return `${labelA}|${labelB}`;
+    }
+    return "|";
   });
-  const [sourceLabelA, sourceLabelB] = mergeSourcesKey.split("|");
+  const [slotLabelA, slotLabelB] = dualSlotLabelsKey.split("|");
 
   const outputMode = useGraphStore((s) => {
     const out = s.outputs.get(id);
@@ -343,20 +388,20 @@ export function OperationNode({ id, data, selected }: Props) {
           {outputMode === "rows" ? "Rows" : outputMode === "single" ? "Single" : "Empty"}
         </span>
       </div>
-      {kind === "merge" || kind === "append" ? (
+      {kind === "merge" || kind === "append" || kind === "unmerge" ? (
         <div className="op-node__merge-body">
           <div className="op-node__merge-row">
             <span className="op-node__handle-tag op-node__handle-tag--a">A</span>
             <span className="op-node__merge-desc">
-              {kind === "append" ? "Main Input" : "Input A"}
-              {sourceLabelA ? ` · ${sourceLabelA}` : ""}
+              {kind === "append" ? "Main Input" : kind === "unmerge" ? "Output A" : "Input A"}
+              {slotLabelA ? ` · ${slotLabelA}` : ""}
             </span>
           </div>
           <div className="op-node__merge-row">
             <span className="op-node__handle-tag op-node__handle-tag--b">B</span>
             <span className="op-node__merge-desc">
-              {kind === "append" ? "Append Data" : "Input B"}
-              {sourceLabelB ? ` · ${sourceLabelB}` : ""}
+              {kind === "append" ? "Append Data" : kind === "unmerge" ? "Output B" : "Input B"}
+              {slotLabelB ? ` · ${slotLabelB}` : ""}
             </span>
           </div>
           <div className="op-node__summary">{summarizeNode(data)}</div>
@@ -380,18 +425,47 @@ export function OperationNode({ id, data, selected }: Props) {
       ) : (
         <div className="op-node__summary">{summarizeNode(data)}</div>
       )}
-      {kind !== "output" && (
-        <Handle
-          type="source"
-          position={layout.source.side}
-          style={placementStyle(layout.source)}
-          className="op-node__handle op-node__handle--source"
-          title="Output"
-        >
-          <span className="op-node__handle-arrow" aria-hidden="true">
-            {triangleForHandle("source", layout.source.side)}
-          </span>
-        </Handle>
+      {kind === "unmerge" ? (
+        <>
+          <Handle
+            type="source"
+            position={layout.a.side}
+            id="a"
+            style={placementStyle(layout.a)}
+            className="op-node__handle op-node__handle--source op-node__handle--a"
+            title="Output A (left of delimiter)"
+          >
+            <span className="op-node__handle-label" aria-hidden="true">
+              A{triangleForHandle("source", layout.a.side)}
+            </span>
+          </Handle>
+          <Handle
+            type="source"
+            position={layout.b.side}
+            id="b"
+            style={placementStyle(layout.b)}
+            className="op-node__handle op-node__handle--source op-node__handle--b"
+            title="Output B (right of delimiter)"
+          >
+            <span className="op-node__handle-label" aria-hidden="true">
+              B{triangleForHandle("source", layout.b.side)}
+            </span>
+          </Handle>
+        </>
+      ) : (
+        kind !== "output" && (
+          <Handle
+            type="source"
+            position={layout.source.side}
+            style={placementStyle(layout.source)}
+            className="op-node__handle op-node__handle--source"
+            title="Output"
+          >
+            <span className="op-node__handle-arrow" aria-hidden="true">
+              {triangleForHandle("source", layout.source.side)}
+            </span>
+          </Handle>
+        )
       )}
     </div>
   );

@@ -12,7 +12,7 @@ import {
 } from "@xyflow/react";
 import { nanoid } from "nanoid";
 import { defaultParams, OPERATION_LABELS, type NodeData, type OperationKind, type OperationParams, type Rows } from "../types";
-import { readFileRows, readPreviewText, splitInputText } from "../engine/textSource";
+import { readFileRows, readPreviewText, splitInputText, type PreviewDirection } from "../engine/textSource";
 import { evaluateGraph } from "../engine/evaluate";
 import { pasteClipboard, snapshotSelection, type NodeClipboard } from "./clipboard";
 import { copyInputFile, forgetInputFile, getInputFile, replaceInputFiles, setInputFile } from "./inputFiles";
@@ -24,6 +24,7 @@ export type FlowNode = Node<NodeData<OperationKind>>;
 
 export type PreviewRowLimitMode = "5" | "10" | "50" | "custom" | "all";
 export type PreviewCharLimitMode = "100" | "500" | "1000" | "custom" | "all";
+export type { PreviewDirection };
 
 const previewRows = new Map<string, Rows>();
 let previewToken = 0;
@@ -48,8 +49,42 @@ function hasFileInput(nodes: FlowNode[]): boolean {
   return nodes.some(isFileInput);
 }
 
+function isDualInputKind(kind: OperationKind | undefined): boolean {
+  return kind === "merge" || kind === "append";
+}
+
+function isDualOutputKind(kind: OperationKind | undefined): boolean {
+  return kind === "unmerge";
+}
+
+function normalizeInputSlot(kind: OperationKind | undefined, handle: string | null | undefined): string | null {
+  if (!isDualInputKind(kind)) return null;
+  return handle === "b" ? "b" : "a";
+}
+
+function normalizeOutputSlot(kind: OperationKind | undefined, handle: string | null | undefined): string | null {
+  if (!isDualOutputKind(kind)) return null;
+  return handle === "b" ? "b" : "a";
+}
+
+export function replaceTargetInputEdge(
+  edges: Edge[],
+  nodes: Array<{ id: string; data?: { kind?: OperationKind } }>,
+  targetId: string,
+  targetHandle: string | null | undefined
+): Edge[] {
+  const targetKind = nodes.find((node) => node.id === targetId)?.data?.kind;
+  if (!isDualInputKind(targetKind)) {
+    return edges.filter((edge) => edge.target !== targetId);
+  }
+  const slot = normalizeInputSlot(targetKind, targetHandle);
+  return edges.filter(
+    (edge) => !(edge.target === targetId && normalizeInputSlot(targetKind, edge.targetHandle) === slot)
+  );
+}
+
 export function bridgeDeletedNodes(
-  remainingNodes: Pick<FlowNode, "id">[],
+  remainingNodes: Array<{ id: string; data?: { kind?: OperationKind } }>,
   remainingEdges: Edge[],
   deletedNodes: Pick<FlowNode, "id">[],
   deletedEdges: Edge[]
@@ -73,7 +108,7 @@ export function bridgeDeletedNodes(
     });
   }
 
-  function findSurvivingSource(startNodeId: string): string | null {
+  function findSurvivingSource(startNodeId: string): { id: string; sourceHandle: string | null } | null {
     const visited = new Set<string>();
     const queue = [startNodeId];
     while (queue.length > 0) {
@@ -82,7 +117,9 @@ export function bridgeDeletedNodes(
       visited.add(current);
       const incoming = incomingByTarget.get(current) ?? [];
       for (const edge of incoming) {
-        if (survivingIds.has(edge.source)) return edge.source;
+        if (survivingIds.has(edge.source)) {
+          return { id: edge.source, sourceHandle: edge.sourceHandle ?? null };
+        }
         if (deletedIds.has(edge.source) && !visited.has(edge.source)) {
           queue.push(edge.source);
         }
@@ -94,20 +131,23 @@ export function bridgeDeletedNodes(
   let nextEdges = [...remainingEdges];
   for (const outEdge of deletedEdges) {
     if (!deletedIds.has(outEdge.source) || !survivingIds.has(outEdge.target)) continue;
+    const targetKind = remainingNodes.find((n) => n.id === outEdge.target)?.data?.kind;
     const targetHandle = outEdge.targetHandle ?? null;
-    const handleOccupied = nextEdges.some(
-      (edge) => edge.target === outEdge.target && (edge.targetHandle ?? null) === targetHandle
-    );
+    const handleOccupied = nextEdges.some((edge) => {
+      if (edge.target !== outEdge.target) return false;
+      if (targetKind !== undefined && !isDualInputKind(targetKind)) return true;
+      return (edge.targetHandle ?? null) === targetHandle;
+    });
     if (handleOccupied) continue;
 
-    const sourceId = findSurvivingSource(outEdge.source);
-    if (!sourceId || sourceId === outEdge.target) continue;
+    const survivingSource = findSurvivingSource(outEdge.source);
+    if (!survivingSource || survivingSource.id === outEdge.target) continue;
 
     nextEdges = addEdge(
       {
-        source: sourceId,
+        source: survivingSource.id,
         target: outEdge.target,
-        sourceHandle: null,
+        sourceHandle: survivingSource.sourceHandle,
         targetHandle,
       },
       nextEdges
@@ -130,6 +170,7 @@ interface GraphState {
   previewRowCustom: number;
   previewCharLimitMode: PreviewCharLimitMode;
   previewCharCustom: number;
+  previewDirection: PreviewDirection;
   clipboard: NodeClipboard | null;
   pasteIndex: number;
   isReadingFile: boolean;
@@ -161,6 +202,7 @@ interface GraphState {
   ) => boolean;
   setPreviewRowLimit: (mode: PreviewRowLimitMode, custom?: number) => void;
   setPreviewCharLimit: (mode: PreviewCharLimitMode, custom?: number) => void;
+  setPreviewDirection: (direction: PreviewDirection) => void;
   processFullGraph: () => void;
   recompute: () => void;
 }
@@ -175,6 +217,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   outputs: evaluateGraph(initialStarter.nodes, initialStarter.edges, {
     rowLimit: 10,
     charLimit: 500,
+    direction: "head",
     inputRowsById: previewRows,
   }),
   fullOutputs: new Map(),
@@ -184,6 +227,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   previewRowCustom: 50,
   previewCharLimitMode: "500",
   previewCharCustom: 1000,
+  previewDirection: "head",
   clipboard: null,
   pasteIndex: 0,
   isReadingFile: false,
@@ -211,10 +255,23 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     }
   },
   onConnect: (connection) => {
-    const filtered = get().edges.filter(
-      (edge) => !(edge.target === connection.target && edge.targetHandle === connection.targetHandle)
-    );
-    set({ edges: addEdge(connection, filtered) });
+    if (!connection.source || !connection.target || connection.source === connection.target) return;
+    const nodes = get().nodes;
+    const sourceKind = nodes.find((node) => node.id === connection.source)?.data.kind;
+    const sourceHandle = normalizeOutputSlot(sourceKind, connection.sourceHandle);
+    const targetKind = nodes.find((node) => node.id === connection.target)?.data.kind;
+    const targetHandle = normalizeInputSlot(targetKind, connection.targetHandle);
+    const filtered = replaceTargetInputEdge(get().edges, nodes, connection.target, targetHandle);
+    set({
+      edges: addEdge(
+        {
+          ...connection,
+          sourceHandle,
+          targetHandle,
+        },
+        filtered
+      ),
+    });
     get().recompute();
   },
   addNode: (kind, position, edgeId) => {
@@ -225,16 +282,37 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       position,
       data: { kind, label: OPERATION_LABELS[kind], params: defaultParams(kind) },
     };
-    set({ nodes: [...get().nodes, node] });
+    const nextNodes = [...get().nodes, node];
+    set({ nodes: nextNodes });
 
     const splicedEdge = edgeId ? get().edges.find((edge) => edge.id === edgeId) : undefined;
     if (splicedEdge) {
       let edges = get().edges.filter((edge) => edge.id !== edgeId);
       if (kind !== "input") {
-        edges = addEdge({ source: splicedEdge.source, target: id, sourceHandle: null, targetHandle: null }, edges);
+        const sourceKind = nextNodes.find((n) => n.id === splicedEdge.source)?.data.kind;
+        edges = addEdge(
+          {
+            source: splicedEdge.source,
+            target: id,
+            sourceHandle: normalizeOutputSlot(sourceKind, splicedEdge.sourceHandle),
+            targetHandle: normalizeInputSlot(kind, null),
+          },
+          edges
+        );
       }
       if (kind !== "output") {
-        edges = addEdge({ source: id, target: splicedEdge.target, sourceHandle: null, targetHandle: null }, edges);
+        const targetKind = nextNodes.find((n) => n.id === splicedEdge.target)?.data.kind;
+        const targetHandle = normalizeInputSlot(targetKind, splicedEdge.targetHandle);
+        edges = replaceTargetInputEdge(edges, nextNodes, splicedEdge.target, targetHandle);
+        edges = addEdge(
+          {
+            source: id,
+            target: splicedEdge.target,
+            sourceHandle: normalizeOutputSlot(kind, null),
+            targetHandle,
+          },
+          edges
+        );
       }
       set({ edges });
     }
@@ -243,19 +321,40 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     return id;
   },
   spliceNodeIntoEdge: (nodeId, edgeId) => {
-    const node = get().nodes.find((item) => item.id === nodeId);
+    const nodes = get().nodes;
+    const node = nodes.find((item) => item.id === nodeId);
     const splicedEdge = get().edges.find((edge) => edge.id === edgeId);
     if (!node || !splicedEdge) return;
     if (splicedEdge.source === nodeId || splicedEdge.target === nodeId) return;
 
     let edges = get().edges.filter((edge) => edge.id !== edgeId);
     if (node.data.kind !== "input") {
-      edges = edges.filter((edge) => edge.target !== nodeId);
-      edges = addEdge({ source: splicedEdge.source, target: nodeId, sourceHandle: null, targetHandle: null }, edges);
+      const sourceKind = nodes.find((n) => n.id === splicedEdge.source)?.data.kind;
+      const inHandle = normalizeInputSlot(node.data.kind, null);
+      edges = replaceTargetInputEdge(edges, nodes, nodeId, inHandle);
+      edges = addEdge(
+        {
+          source: splicedEdge.source,
+          target: nodeId,
+          sourceHandle: normalizeOutputSlot(sourceKind, splicedEdge.sourceHandle),
+          targetHandle: inHandle,
+        },
+        edges
+      );
     }
     if (node.data.kind !== "output") {
-      edges = edges.filter((edge) => edge.target !== splicedEdge.target);
-      edges = addEdge({ source: nodeId, target: splicedEdge.target, sourceHandle: null, targetHandle: null }, edges);
+      const targetKind = nodes.find((n) => n.id === splicedEdge.target)?.data.kind;
+      const targetHandle = normalizeInputSlot(targetKind, splicedEdge.targetHandle);
+      edges = replaceTargetInputEdge(edges, nodes, splicedEdge.target, targetHandle);
+      edges = addEdge(
+        {
+          source: nodeId,
+          target: splicedEdge.target,
+          sourceHandle: normalizeOutputSlot(node.data.kind, null),
+          targetHandle,
+        },
+        edges
+      );
     }
     set({ edges });
     get().recompute();
@@ -428,8 +527,9 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     else get().recompute();
   },
   connectMagnetically: (draggedId, hoveredId, draggedX, hoveredHandle, draggedHandle) => {
-    const dragged = get().nodes.find((node) => node.id === draggedId);
-    const hovered = get().nodes.find((node) => node.id === hoveredId);
+    const nodes = get().nodes;
+    const dragged = nodes.find((node) => node.id === draggedId);
+    const hovered = nodes.find((node) => node.id === hoveredId);
     if (!dragged || !hovered) return false;
     const link = planMagneticConnection(
       { id: dragged.id, kind: dragged.data.kind, x: draggedX, y: dragged.position.y },
@@ -439,19 +539,22 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       draggedHandle
     );
     if (!link) return false;
+    const sourceKind = nodes.find((node) => node.id === link.source)?.data.kind;
+    const sourceHandle = normalizeOutputSlot(sourceKind, link.sourceHandle);
+    const targetKind = nodes.find((node) => node.id === link.target)?.data.kind;
+    const targetHandle = normalizeInputSlot(targetKind, link.targetHandle);
     const exists = get().edges.some(
       (edge) =>
         edge.source === link.source &&
         edge.target === link.target &&
-        (edge.targetHandle ?? null) === link.targetHandle
+        normalizeOutputSlot(sourceKind, edge.sourceHandle) === sourceHandle &&
+        normalizeInputSlot(targetKind, edge.targetHandle) === targetHandle
     );
     if (exists) return true;
-    const filtered = get().edges.filter(
-      (edge) => !(edge.target === link.target && (edge.targetHandle ?? null) === link.targetHandle)
-    );
+    const filtered = replaceTargetInputEdge(get().edges, nodes, link.target, targetHandle);
     set({
       edges: addEdge(
-        { source: link.source, target: link.target, sourceHandle: null, targetHandle: link.targetHandle },
+        { source: link.source, target: link.target, sourceHandle, targetHandle },
         filtered
       ),
     });
@@ -474,15 +577,22 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     if (hasFileInput(get().nodes)) void refreshFilePreviews();
     else get().recompute();
   },
+  setPreviewDirection: (direction) => {
+    set({ previewDirection: direction });
+    if (hasFileInput(get().nodes)) void refreshFilePreviews();
+    else get().recompute();
+  },
   processFullGraph: () => {
     void runFullProcess();
   },
   recompute: () => {
     const rowLimit = getRowLimit(get().previewRowLimitMode, get().previewRowCustom);
     const charLimit = getCharLimit(get().previewCharLimitMode, get().previewCharCustom);
+    const direction = get().previewDirection;
     const outputs = evaluateGraph(get().nodes, get().edges, {
       rowLimit,
       charLimit,
+      direction,
       inputRowsById: previewRows,
     });
     set({ outputs });
@@ -501,17 +611,20 @@ async function refreshFilePreviews(): Promise<void> {
   useGraphStore.setState({ isReadingFile: true });
   const rowLimit = getRowLimit(get().previewRowLimitMode, get().previewRowCustom);
   const charLimit = getCharLimit(get().previewCharLimitMode, get().previewCharCustom);
+  const direction = get().previewDirection;
   const next = new Map<string, Rows>();
   await Promise.all(
     nodes.map(async (node) => {
       const file = getInputFile(node.id);
       const params = node.data.params as OperationParams["input"];
       if (!file) return;
-      const text = await readPreviewText(file, params, rowLimit, charLimit);
-      let rows = splitInputText(text, params);
-      if (rowLimit && rows.length > rowLimit) rows = rows.slice(0, rowLimit);
+      const text = await readPreviewText(file, params, rowLimit, charLimit, direction);
+      let rows = splitInputText(text, params, rowLimit, direction);
+      if (rowLimit && rows.length > rowLimit) {
+        rows = direction === "tail" ? rows.slice(-rowLimit) : rows.slice(0, rowLimit);
+      }
       if (params.inputType === "single" && charLimit && rows[0] && rows[0].length > charLimit) {
-        rows = [rows[0].slice(0, charLimit)];
+        rows = [direction === "tail" ? rows[0].slice(-charLimit) : rows[0].slice(0, charLimit)];
       }
       next.set(node.id, rows);
     })
