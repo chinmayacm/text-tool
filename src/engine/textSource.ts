@@ -20,10 +20,47 @@ export function inputDelimiter(params: Pick<InputParams, "inputType" | "delimite
   return "\n";
 }
 
-export function splitInputText(text: string, params: Pick<InputParams, "inputType" | "delimiter">): Rows {
+export function splitInputText(
+  text: string,
+  params: Pick<InputParams, "inputType" | "delimiter">,
+  maxRows?: number
+): Rows {
   const delimiter = inputDelimiter(params);
   if (delimiter == null) return [text];
-  return text.split(delimiter);
+  const limit = maxRows && Number.isFinite(maxRows) ? Math.max(1, maxRows) : undefined;
+
+  if (params.inputType === "custom" && delimiter !== "\n") {
+    const rows: Rows = [];
+    let start = 0;
+    while (start <= text.length) {
+      const idx = text.indexOf(delimiter, start);
+      const raw = idx === -1 ? text.slice(start) : text.slice(start, idx);
+      const part = raw.replace(/^\r?\n+|\r?\n+$/g, "");
+      if (part.length > 0) {
+        rows.push(part);
+        if (limit && rows.length >= limit) break;
+      }
+      if (idx === -1) break;
+      start = idx + delimiter.length;
+    }
+    return rows;
+  }
+
+  if (!limit) return text.split(/\r?\n/);
+
+  const rows: Rows = [];
+  let start = 0;
+  while (start <= text.length && rows.length < limit) {
+    const nlIdx = text.indexOf("\n", start);
+    if (nlIdx === -1) {
+      rows.push(text.slice(start));
+      break;
+    }
+    const end = nlIdx > start && text.charCodeAt(nlIdx - 1) === 13 ? nlIdx - 1 : nlIdx;
+    rows.push(text.slice(start, end));
+    start = nlIdx + 1;
+  }
+  return rows;
 }
 
 export function formatBytes(size: number): string {

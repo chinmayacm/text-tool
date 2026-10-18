@@ -1,5 +1,33 @@
+:root {
+  color-scheme: dark;
+}
+
 * {
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: #35353c transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #35353c;
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #4e4e58;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 html,

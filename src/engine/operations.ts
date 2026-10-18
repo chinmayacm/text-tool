@@ -38,8 +38,11 @@ export function runOperation(
           options?.charLimit && Number.isFinite(options.charLimit) ? text.slice(0, options.charLimit) : text,
         ];
       } else {
-        const lines = splitInputText(params.text ?? "", { inputType, delimiter: params.delimiter ?? "," });
-        result = options?.rowLimit && Number.isFinite(options.rowLimit) ? lines.slice(0, options.rowLimit) : lines;
+        result = splitInputText(
+          params.text ?? "",
+          { inputType, delimiter: params.delimiter ?? "," },
+          options?.rowLimit
+        );
       }
       break;
     }
@@ -48,8 +51,14 @@ export function runOperation(
       if (!delimiter) {
         result = input;
       } else {
-        const re = toRegExp(delimiter, useRegex, "g");
-        result = input.flatMap((row) => row.split(re));
+        const effectiveDelimiter = useRegex ? delimiter : delimiter.replace(/\\n/g, "\n").replace(/\\t/g, "\t");
+        const re = toRegExp(effectiveDelimiter, useRegex, "g");
+        result = input.flatMap((row) =>
+          row
+            .split(re)
+            .map((part) => part.replace(/^\r?\n+|\r?\n+$/g, ""))
+            .filter((part) => part.length > 0)
+        );
       }
       break;
     }
@@ -88,12 +97,23 @@ export function runOperation(
       break;
     }
     case "trim": {
-      const { mode } = data.params as NodeData<"trim">["params"];
-      result = input.map((row) => {
-        if (mode === "start") return row.replace(/^\s+/, "");
-        if (mode === "end") return row.replace(/\s+$/, "");
-        return row.trim();
-      });
+      const { mode, chars } = data.params as NodeData<"trim">["params"];
+      if (!chars) {
+        result = input.map((row) => {
+          if (mode === "start") return row.replace(/^\s+/, "");
+          if (mode === "end") return row.replace(/\s+$/, "");
+          return row.trim();
+        });
+      } else {
+        const escaped = chars.replace(/[-\\^\]]/g, "\\$&");
+        const startRe = new RegExp(`^[${escaped}]+`);
+        const endRe = new RegExp(`[${escaped}]+$`);
+        result = input.map((row) => {
+          if (mode === "start") return row.replace(startRe, "");
+          if (mode === "end") return row.replace(endRe, "");
+          return row.replace(startRe, "").replace(endRe, "");
+        });
+      }
       break;
     }
     case "replace": {

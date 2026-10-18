@@ -45,8 +45,12 @@ export function useProjectPersistence() {
       try {
         const project = await loadLocalProject();
         if (disposed) return;
-        if (project) restoreProject(project);
-        setStatus(project ? "saved" : "ready");
+        if (project && project.nodes.length > 0) {
+          restoreProject(project);
+          setStatus("saved");
+        } else {
+          setStatus("ready");
+        }
       } catch {
         if (disposed) return;
         setStatus("error");

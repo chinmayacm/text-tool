@@ -9,33 +9,50 @@
   overflow-y: auto;
 }
 
-.sidebar h2 {
-  font-size: 13px;
-  text-transform: uppercase;
+.sidebar__section {
+  margin: 0 0 10px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid #35353c;
+}
+
+.sidebar__section--nodes {
+  border-bottom: 0;
+}
+
+.sidebar__section-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 3px 0;
+  border: 0;
+  background: none;
+  color: #b8b8be;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
   letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.sidebar__section-toggle:hover {
+  color: #f1f1f3;
+}
+
+.sidebar__chevron {
+  font-size: 11px;
   color: #8c8c92;
-  margin: 0 0 4px;
+}
+
+.sidebar__section-body {
+  padding-top: 6px;
 }
 
 .sidebar__hint {
   font-size: 11px;
   color: #6b6b70;
-  margin: 0 0 12px;
-}
-
-.sidebar__project {
-  margin: 0 0 14px;
-  padding: 9px 0 11px;
-  border-top: 1px solid #35353c;
-  border-bottom: 1px solid #35353c;
-}
-
-.sidebar__project h3 {
-  margin: 0 0 5px;
-  color: #b8b8be;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
+  margin: 0 0 8px;
 }
 
 .sidebar__save-status,
@@ -52,7 +69,8 @@
   color: #f29a9a;
 }
 
-.sidebar__project-button {
+.sidebar__project-button,
+.sidebar__template-button {
   width: 100%;
   margin: 0 0 5px;
   padding: 6px 7px;
@@ -66,8 +84,25 @@
   cursor: pointer;
 }
 
-.sidebar__project-button:hover {
+.sidebar__project-button:hover,
+.sidebar__template-button:hover {
   border-color: #5b9cf6;
+}
+
+.sidebar__template-button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar__template-name {
+  font-weight: 500;
+  color: #e6e6e6;
+}
+
+.sidebar__template-desc {
+  font-size: 10px;
+  color: #8c8c92;
 }
 
 .sidebar__project-button--destructive {
@@ -101,7 +136,31 @@
   border-color: #5b9cf6;
 }
 
+.sidebar__tooltip {
+  position: fixed;
+  transform: translateY(-50%);
+  max-width: 230px;
+  padding: 6px 9px;
+  border: 1px solid #45454c;
+  border-radius: 6px;
+  background: #141417;
+  color: #d4d4d8;
+  font-size: 11px;
+  line-height: 1.4;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  z-index: 100;
+}
+
+.sidebar__tooltip strong {
+  color: #f1f1f3;
+}
+
 .sidebar__footer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   margin-top: auto;
   padding-top: 16px;
 }

@@ -4,6 +4,7 @@ export type MagnetNode = {
   id: string;
   kind: OperationKind;
   x: number;
+  y?: number;
 };
 
 export type MagnetEdge = {
@@ -18,7 +19,7 @@ export type MagneticLink = {
   targetHandle: string | null;
 };
 
-/** Left node feeds the right node. Returns null when the pair cannot be connected. */
+/** Left node feeds the right node (or top feeds bottom when stacked vertically). Returns null when the pair cannot be connected. */
 export function planMagneticConnection(
   dragged: MagnetNode,
   hovered: MagnetNode,
@@ -27,7 +28,17 @@ export function planMagneticConnection(
   draggedHandle: string | null
 ): MagneticLink | null {
   if (dragged.id === hovered.id) return null;
-  const source = dragged.x <= hovered.x ? dragged : hovered;
+  const verticalDominant =
+    dragged.y !== undefined &&
+    hovered.y !== undefined &&
+    Math.abs(dragged.y - hovered.y) * 1.4 > Math.abs(dragged.x - hovered.x);
+  const source = verticalDominant
+    ? dragged.y! <= hovered.y!
+      ? dragged
+      : hovered
+    : dragged.x <= hovered.x
+      ? dragged
+      : hovered;
   const dest = source.id === dragged.id ? hovered : dragged;
   if (source.kind === "output" || dest.kind === "input") return null;
   if (reaches(edges, dest.id, source.id)) return null;

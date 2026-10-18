@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { applyAppend } from "./append.ts";
+import { runOperation } from "./operations.ts";
 import { readPreviewText, splitInputText } from "./textSource.ts";
 import { planMagneticConnection } from "../store/magnet.ts";
+import { bridgeDeletedNodes } from "../store/useGraphStore.ts";
 
 test("custom input split keeps the delimiter and decodes escapes", () => {
   assert.deepEqual(splitInputText("a|b|c", { inputType: "custom", delimiter: "|" }), ["a", "b", "c"]);
@@ -47,4 +49,48 @@ test("magnetic connect uses left-to-right flow and rejects a cycle", () => {
     null
   );
   assert.equal(blocked, null);
+});
+
+test("deleting intermediate node(s) bridges A -> B -> C into A -> C", () => {
+  const bridged = bridgeDeletedNodes(
+    [{ id: "A" }, { id: "C" }],
+    [],
+    [{ id: "B" }],
+    [
+      { id: "e1", source: "A", target: "B" },
+      { id: "e2", source: "B", target: "C", targetHandle: "b" },
+    ]
+  );
+  assert.equal(bridged.length, 1);
+  assert.equal(bridged[0].source, "A");
+  assert.equal(bridged[0].target, "C");
+  assert.equal(bridged[0].targetHandle, "b");
+});
+
+test("trim strips whitespace by default or custom symbols when specified", () => {
+  assert.deepEqual(
+    runOperation({ kind: "trim", label: "Trim", params: { mode: "both", chars: "" } }, ["  hello  "]),
+    ["hello"]
+  );
+  assert.deepEqual(
+    runOperation({ kind: "trim", label: "Trim", params: { mode: "both", chars: "'-]" } }, ["'--hello-]'"]),
+    ["hello"]
+  );
+});
+
+test("split does not insert blank rows from trailing delimiters or line breaks", () => {
+  assert.deepEqual(
+    runOperation({ kind: "split", label: "Split", params: { delimiter: ",", useRegex: false } }, [
+      "apple,",
+      "banana,",
+      "carrot",
+    ]),
+    ["apple", "banana", "carrot"]
+  );
+  assert.deepEqual(
+    runOperation({ kind: "split", label: "Split", params: { delimiter: ",", useRegex: false } }, [
+      "apple,\nbanana,\ncarrot",
+    ]),
+    ["apple", "banana", "carrot"]
+  );
 });

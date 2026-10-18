@@ -28,7 +28,7 @@ export interface OperationParams {
   join: { delimiter: string };
   merge: { delimiter: string; missingFallback: string };
   append: { text: string; scope: "all" | "row" | "insert"; side: "start" | "end"; line: number };
-  trim: { mode: "both" | "start" | "end" };
+  trim: { mode: "both" | "start" | "end"; chars?: string };
   replace: { find: string; replaceWith: string; useRegex: boolean; all: boolean };
   case: { mode: "upper" | "lower" | "title" | "sentence" };
   filter: { pattern: string; useRegex: boolean; invert: boolean };
@@ -55,6 +55,20 @@ export const OPERATION_LABELS: Record<OperationKind, string> = {
   output: "Output",
 };
 
+export const OPERATION_DESCRIPTIONS: Record<OperationKind, string> = {
+  input: "Load pasted text or a CSV/TXT file as rows.",
+  split: "Break each row into multiple rows at a delimiter.",
+  enclose: "Wrap every row with a prefix and suffix.",
+  join: "Combine all rows into a single row with a delimiter.",
+  merge: "Pair and join rows from two inputs side-by-side.",
+  append: "Add text or rows to the start, end, or a specific line.",
+  trim: "Remove leading/trailing whitespace or custom symbols from every row.",
+  replace: "Find and replace text or regex matches in every row.",
+  case: "Convert rows to UPPER, lower, Title, or Sentence case.",
+  filter: "Keep or exclude rows matching a text or regex pattern.",
+  output: "Process the full graph and copy or download the result.",
+};
+
 export function defaultParams<K extends OperationKind>(kind: K): OperationParams[K] {
   const defaults: OperationParams = {
     input: { source: "text", text: "apple,banana\ncarrot,date", fileName: "", fileSize: 0, inputType: "lines", delimiter: "," },
@@ -63,7 +77,7 @@ export function defaultParams<K extends OperationKind>(kind: K): OperationParams
     join: { delimiter: "," },
     merge: { delimiter: " ", missingFallback: "" },
     append: { text: "", scope: "insert", side: "end", line: 0 },
-    trim: { mode: "both" },
+    trim: { mode: "both", chars: "" },
     replace: { find: "", replaceWith: "", useRegex: false, all: true },
     case: { mode: "upper" },
     filter: { pattern: "", useRegex: false, invert: false },
@@ -107,7 +121,8 @@ export function summarizeNode(data: NodeData<OperationKind>): string {
     }
     case "trim": {
       const p = data.params as OperationParams["trim"];
-      return `Mode: ${p.mode}`;
+      const target = p.chars ? `"${p.chars}"` : "whitespace";
+      return `${p.mode} · ${target}`;
     }
     case "replace": {
       const p = data.params as OperationParams["replace"];

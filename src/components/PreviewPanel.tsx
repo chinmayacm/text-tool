@@ -45,7 +45,16 @@ export function PreviewPanel() {
 
       {selectedNode ? (
         <>
-          <p className="preview__node-name">{selectedNode.data.label}</p>
+          <div className="preview__node-row">
+            <p className="preview__node-name">{selectedNode.data.label}</p>
+            <span className={`preview__mode-badge ${isSingleLine ? "preview__mode-badge--single" : "preview__mode-badge--rows"}`}>
+              {rows.length === 0 || (rows.length === 1 && rows[0] === "")
+                ? "Empty"
+                : isSingleLine
+                  ? "Single line"
+                  : "Multiline (rows)"}
+            </span>
+          </div>
 
           <div className="preview__limit-controls">
             {!isSingleLine ? (

@@ -1,7 +1,7 @@
 import { useRef, type RefObject } from "react";
 import { formatBytes } from "../engine/textSource";
 import { useGraphStore } from "../store/useGraphStore";
-import type { NodeData, OperationParams } from "../types";
+import { OPERATION_DESCRIPTIONS, OPERATION_LABELS, type NodeData, type OperationParams } from "../types";
 import "./PropertiesPanel.css";
 
 export function PropertiesPanel() {
@@ -59,7 +59,19 @@ export function PropertiesPanel() {
 
   return (
     <section className="properties">
-      <h2>Properties</h2>
+      <div className="properties__header">
+        <h2>Properties</h2>
+        <div className="properties__about">
+          <span className="properties__kind-badge">{OPERATION_LABELS[kind]}</span>
+          <span
+            className="properties__info"
+            data-tooltip={OPERATION_DESCRIPTIONS[kind]}
+            aria-label={OPERATION_DESCRIPTIONS[kind]}
+          >
+            ?
+          </span>
+        </div>
+      </div>
       {selectedCount > 1 && (
         <p className="properties__hint">{selectedCount} nodes selected. Editing the last one. Ctrl+C / Ctrl+V copies the selection.</p>
       )}
@@ -162,17 +174,34 @@ export function PropertiesPanel() {
         )}
 
         {kind === "trim" && (
-          <label>
-            Mode
-            <select
-              value={(data.params as NodeData<"trim">["params"]).mode}
-              onChange={(e) => set({ mode: e.target.value as "both" | "start" | "end" })}
-            >
-              <option value="both">Both ends</option>
-              <option value="start">Start only</option>
-              <option value="end">End only</option>
-            </select>
-          </label>
+          <>
+            <label>
+              Mode
+              <select
+                value={(data.params as NodeData<"trim">["params"]).mode}
+                onChange={(e) => set({ mode: e.target.value as "both" | "start" | "end" })}
+              >
+                <option value="both">Both ends</option>
+                <option value="start">Start only</option>
+                <option value="end">End only</option>
+              </select>
+            </label>
+            <label>
+              Characters to trim
+              <input
+                value={(data.params as NodeData<"trim">["params"]).chars ?? ""}
+                onChange={(e) => set({ chars: e.target.value })}
+                placeholder="Default: whitespace"
+              />
+            </label>
+            <p className="properties__note">
+              Leave empty to trim whitespace, or enter symbols (e.g. <code>&apos;&quot;-</code>) to strip from{" "}
+              {(data.params as NodeData<"trim">["params"]).mode === "both"
+                ? "both ends"
+                : `the ${(data.params as NodeData<"trim">["params"]).mode}`}
+              .
+            </p>
+          </>
         )}
 
         {kind === "replace" && (

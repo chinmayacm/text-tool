@@ -40,6 +40,7 @@ export function Canvas() {
   const viewport = useGraphStore((s) => s.viewport);
   const onNodesChange = useGraphStore((s) => s.onNodesChange);
   const onEdgesChange = useGraphStore((s) => s.onEdgesChange);
+  const onDelete = useGraphStore((s) => s.onDelete);
   const onConnect = useGraphStore((s) => s.onConnect);
   const addNode = useGraphStore((s) => s.addNode);
   const spliceNodeIntoEdge = useGraphStore((s) => s.spliceNodeIntoEdge);
@@ -279,6 +280,7 @@ export function Canvas() {
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onDelete={onDelete}
         onConnect={onConnect}
         onSelectionChange={onSelectionChange}
         onMoveEnd={(_, nextViewport) => {

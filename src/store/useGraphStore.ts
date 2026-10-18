@@ -18,6 +18,7 @@ import { pasteClipboard, snapshotSelection, type NodeClipboard } from "./clipboa
 import { copyInputFile, forgetInputFile, getInputFile, replaceInputFiles, setInputFile } from "./inputFiles";
 import { planMagneticConnection } from "./magnet";
 import type { ProjectSnapshot } from "./projectPersistence";
+import { createStarterGraph, GRAPH_TEMPLATES } from "../templates";
 
 export type FlowNode = Node<NodeData<OperationKind>>;
 
@@ -47,6 +48,75 @@ function hasFileInput(nodes: FlowNode[]): boolean {
   return nodes.some(isFileInput);
 }
 
+export function bridgeDeletedNodes(
+  remainingNodes: Pick<FlowNode, "id">[],
+  remainingEdges: Edge[],
+  deletedNodes: Pick<FlowNode, "id">[],
+  deletedEdges: Edge[]
+): Edge[] {
+  if (deletedNodes.length === 0 || deletedEdges.length === 0) return remainingEdges;
+
+  const deletedIds = new Set(deletedNodes.map((node) => node.id));
+  const survivingIds = new Set(remainingNodes.map((node) => node.id));
+
+  const incomingByTarget = new Map<string, Edge[]>();
+  for (const edge of deletedEdges) {
+    if (!deletedIds.has(edge.target)) continue;
+    const list = incomingByTarget.get(edge.target) ?? [];
+    list.push(edge);
+    incomingByTarget.set(edge.target, list);
+  }
+  for (const list of incomingByTarget.values()) {
+    list.sort((a, b) => {
+      const rank = (h: string | null | undefined) => (!h || h === "a" ? 0 : 1);
+      return rank(a.targetHandle) - rank(b.targetHandle);
+    });
+  }
+
+  function findSurvivingSource(startNodeId: string): string | null {
+    const visited = new Set<string>();
+    const queue = [startNodeId];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      const incoming = incomingByTarget.get(current) ?? [];
+      for (const edge of incoming) {
+        if (survivingIds.has(edge.source)) return edge.source;
+        if (deletedIds.has(edge.source) && !visited.has(edge.source)) {
+          queue.push(edge.source);
+        }
+      }
+    }
+    return null;
+  }
+
+  let nextEdges = [...remainingEdges];
+  for (const outEdge of deletedEdges) {
+    if (!deletedIds.has(outEdge.source) || !survivingIds.has(outEdge.target)) continue;
+    const targetHandle = outEdge.targetHandle ?? null;
+    const handleOccupied = nextEdges.some(
+      (edge) => edge.target === outEdge.target && (edge.targetHandle ?? null) === targetHandle
+    );
+    if (handleOccupied) continue;
+
+    const sourceId = findSurvivingSource(outEdge.source);
+    if (!sourceId || sourceId === outEdge.target) continue;
+
+    nextEdges = addEdge(
+      {
+        source: sourceId,
+        target: outEdge.target,
+        sourceHandle: null,
+        targetHandle,
+      },
+      nextEdges
+    );
+  }
+
+  return nextEdges;
+}
+
 interface GraphState {
   nodes: FlowNode[];
   edges: Edge[];
@@ -66,6 +136,7 @@ interface GraphState {
 
   onNodesChange: (changes: NodeChange<FlowNode>[]) => void;
   onEdgesChange: (changes: EdgeChange[]) => void;
+  onDelete: (params: { nodes: FlowNode[]; edges: Edge[] }) => void;
   onConnect: (connection: Connection) => void;
   addNode: (kind: OperationKind, position: { x: number; y: number }, edgeId?: string) => string;
   spliceNodeIntoEdge: (nodeId: string, edgeId: string) => void;
@@ -78,6 +149,7 @@ interface GraphState {
   attachInputFile: (id: string, file: File) => void;
   clearInputFile: (id: string) => void;
   resetProject: () => void;
+  applyTemplate: (templateId: string) => void;
   setViewport: (viewport: Viewport) => void;
   restoreProject: (project: ProjectSnapshot) => void;
   connectMagnetically: (
@@ -93,12 +165,18 @@ interface GraphState {
   recompute: () => void;
 }
 
+const initialStarter = createStarterGraph();
+
 export const useGraphStore = create<GraphState>((set, get) => ({
-  nodes: [],
-  edges: [],
+  nodes: initialStarter.nodes,
+  edges: initialStarter.edges,
   selectedNodeId: null,
   viewport: null,
-  outputs: new Map(),
+  outputs: evaluateGraph(initialStarter.nodes, initialStarter.edges, {
+    rowLimit: 10,
+    charLimit: 500,
+    inputRowsById: previewRows,
+  }),
   fullOutputs: new Map(),
   isProcessing: false,
   lastProcessTime: null,
@@ -123,6 +201,14 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   onEdgesChange: (changes) => {
     set({ edges: applyEdgeChanges(changes, get().edges) });
     get().recompute();
+  },
+  onDelete: ({ nodes: deletedNodes, edges: deletedEdges }) => {
+    if (deletedNodes.length === 0) return;
+    const bridged = bridgeDeletedNodes(get().nodes, get().edges, deletedNodes, deletedEdges);
+    if (bridged !== get().edges) {
+      set({ edges: bridged });
+      get().recompute();
+    }
   },
   onConnect: (connection) => {
     const filtered = get().edges.filter(
@@ -273,9 +359,10 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   resetProject: () => {
     replaceInputFiles([]);
     previewRows.clear();
+    const starter = createStarterGraph();
     set({
-      nodes: [],
-      edges: [],
+      nodes: starter.nodes,
+      edges: starter.edges,
       selectedNodeId: null,
       viewport: { x: 0, y: 0, zoom: 1 },
       outputs: new Map(),
@@ -290,6 +377,26 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       clipboard: null,
       pasteIndex: 0,
     });
+    get().recompute();
+  },
+  applyTemplate: (templateId) => {
+    const template = GRAPH_TEMPLATES.find((item) => item.id === templateId);
+    if (!template) return;
+    replaceInputFiles([]);
+    previewRows.clear();
+    const { nodes, edges } = template.createGraph();
+    const outputNode = nodes.find((node) => node.data.kind === "output");
+    set({
+      nodes,
+      edges,
+      selectedNodeId: outputNode?.id ?? nodes[0]?.id ?? null,
+      viewport: { x: 0, y: 0, zoom: 1 },
+      fullOutputs: new Map(),
+      lastProcessTime: null,
+      isProcessing: false,
+      isReadingFile: false,
+    });
+    get().recompute();
   },
   setViewport: (viewport) => {
     const previous = get().viewport;
@@ -325,8 +432,8 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     const hovered = get().nodes.find((node) => node.id === hoveredId);
     if (!dragged || !hovered) return false;
     const link = planMagneticConnection(
-      { id: dragged.id, kind: dragged.data.kind, x: draggedX },
-      { id: hovered.id, kind: hovered.data.kind, x: hovered.position.x },
+      { id: dragged.id, kind: dragged.data.kind, x: draggedX, y: dragged.position.y },
+      { id: hovered.id, kind: hovered.data.kind, x: hovered.position.x, y: hovered.position.y },
       get().edges,
       hoveredHandle,
       draggedHandle
