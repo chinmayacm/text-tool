@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://chinmayacm.github.io/text-tool/sitemap.xml
+
