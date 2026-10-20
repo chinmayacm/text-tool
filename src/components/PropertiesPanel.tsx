@@ -656,10 +656,13 @@ export function PropertiesPanel() {
                 Pad character
                 <input
                   value={(data.params as NodeData<"pad">["params"]).padChar}
-                  maxLength={1}
-                  onChange={(e) => set({ padChar: e.target.value || " " })}
+                  placeholder="Default: space (or e.g. 0, ., -)"
+                  onChange={(e) => set({ padChar: e.target.value.slice(-1) })}
                 />
-                <CharTokens value={(data.params as NodeData<"pad">["params"]).padChar} />
+                <CharTokens
+                  value={(data.params as NodeData<"pad">["params"]).padChar}
+                  emptyLabel="␣ space (default)"
+                />
               </label>
             )}
           </>

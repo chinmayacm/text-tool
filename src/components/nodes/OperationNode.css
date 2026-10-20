@@ -78,38 +78,39 @@
 }
 
 .op-node__merge-body {
-  padding: 8px 10px;
+  padding: 8px 16px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
 }
 
 .op-node__merge-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   height: 18px;
 }
 
-.op-node__handle-tag {
-  font-size: 10px;
-  font-weight: 700;
-  color: #5b9cf6;
-  width: 10px;
-  text-align: center;
+.op-node__slot-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
-.op-node__handle-tag--a {
-  color: #5b9cf6;
+.op-node__slot-dot--a {
+  background: #5b9cf6;
+  box-shadow: 0 0 4px rgba(91, 156, 246, 0.55);
 }
 
-.op-node__handle-tag--b {
-  color: #f59e0b;
+.op-node__slot-dot--b {
+  background: #f59e0b;
+  box-shadow: 0 0 4px rgba(245, 158, 11, 0.55);
 }
 
 .op-node__merge-desc {
   font-size: 11px;
-  color: #8c8c92;
+  color: #b8b8be;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -120,7 +121,7 @@
 .op-node--compare .op-node__summary,
 .op-node--partition .op-node__summary,
 .op-node--append .op-node__summary {
-  padding: 4px 0 0 0;
+  padding: 5px 0 0 0;
   border-top: 1px solid #35353c;
   margin-top: 2px;
 }
@@ -150,9 +151,10 @@
 .op-node__handle--a,
 .op-node__handle--b {
   width: auto !important;
-  min-width: 20px !important;
-  height: 15px !important;
-  padding: 0 3px !important;
+  min-width: 24px !important;
+  height: 17px !important;
+  padding: 0 5px !important;
+  border-radius: 5px !important;
 }
 
 .op-node__handle--a {
@@ -172,14 +174,33 @@
   color: #ffffff;
 }
 
-.op-node__handle-arrow,
-.op-node__handle-label {
+.op-node__handle-arrow {
   pointer-events: none;
   font-size: 9px;
   font-weight: 700;
   line-height: 1;
-  letter-spacing: -0.02em;
   user-select: none;
+}
+
+.op-node__handle-label {
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  line-height: 1;
+  user-select: none;
+}
+
+.op-node__handle-key {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.op-node__handle-caret {
+  font-size: 7.5px;
+  line-height: 1;
+  opacity: 0.85;
 }
 
 .op-node__summary {

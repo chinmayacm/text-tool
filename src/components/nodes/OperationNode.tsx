@@ -342,7 +342,8 @@ export function OperationNode({ id, data, selected }: Props) {
             title="Input A"
           >
             <span className="op-node__handle-label" aria-hidden="true">
-              A{triangleForHandle("target", layout.a.side)}
+              <span className="op-node__handle-key">A</span>
+              <span className="op-node__handle-caret">{triangleForHandle("target", layout.a.side)}</span>
             </span>
           </Handle>
           <Handle
@@ -354,7 +355,8 @@ export function OperationNode({ id, data, selected }: Props) {
             title="Input B"
           >
             <span className="op-node__handle-label" aria-hidden="true">
-              B{triangleForHandle("target", layout.b.side)}
+              <span className="op-node__handle-key">B</span>
+              <span className="op-node__handle-caret">{triangleForHandle("target", layout.b.side)}</span>
             </span>
           </Handle>
         </>
@@ -391,10 +393,10 @@ export function OperationNode({ id, data, selected }: Props) {
       {isDualInputKind(kind) || isDualOutputKind(kind) ? (
         <div className="op-node__merge-body">
           <div className="op-node__merge-row">
-            <span className="op-node__handle-tag op-node__handle-tag--a">A</span>
+            <span className="op-node__slot-dot op-node__slot-dot--a" aria-hidden="true" />
             <span className="op-node__merge-desc">
               {kind === "append"
-                ? "Main Input"
+                ? "Main (A)"
                 : kind === "partition"
                   ? "Matched (A)"
                   : isDualOutputKind(kind)
@@ -404,10 +406,10 @@ export function OperationNode({ id, data, selected }: Props) {
             </span>
           </div>
           <div className="op-node__merge-row">
-            <span className="op-node__handle-tag op-node__handle-tag--b">B</span>
+            <span className="op-node__slot-dot op-node__slot-dot--b" aria-hidden="true" />
             <span className="op-node__merge-desc">
               {kind === "append"
-                ? "Append Data"
+                ? "Append (B)"
                 : kind === "partition"
                   ? "Unmatched (B)"
                   : isDualOutputKind(kind)
@@ -448,7 +450,8 @@ export function OperationNode({ id, data, selected }: Props) {
             title={kind === "partition" ? "Output A (matched rows)" : "Output A (left of delimiter)"}
           >
             <span className="op-node__handle-label" aria-hidden="true">
-              A{triangleForHandle("source", layout.a.side)}
+              <span className="op-node__handle-key">A</span>
+              <span className="op-node__handle-caret">{triangleForHandle("source", layout.a.side)}</span>
             </span>
           </Handle>
           <Handle
@@ -460,7 +463,8 @@ export function OperationNode({ id, data, selected }: Props) {
             title={kind === "partition" ? "Output B (unmatched rows)" : "Output B (right of delimiter)"}
           >
             <span className="op-node__handle-label" aria-hidden="true">
-              B{triangleForHandle("source", layout.b.side)}
+              <span className="op-node__handle-key">B</span>
+              <span className="op-node__handle-caret">{triangleForHandle("source", layout.b.side)}</span>
             </span>
           </Handle>
         </>
