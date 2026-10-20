@@ -68,6 +68,20 @@
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <main>
+        <h1>TextTool — Visual Node-Graph Text &amp; List Transformer</h1>
+        <p>
+          TextTool is a free, privacy-first, browser-based node graph for transforming text, CSVs, logs, and lists. All processing happens locally in your browser with no backend server.
+        </p>
+        <h2>Available Operations &amp; Nodes</h2>
+        <ul>
+          <li><strong>Input &amp; Output:</strong> Load pasted text or CSV/TXT files with lazy Head/Tail preview slicing and export processed results.</li>
+          <li><strong>Structure &amp; Combine:</strong> Split, Join, Merge (A + B), Unmerge (split row into two parallel columns A &amp; B), Compare (set difference A − B, intersection A ∩ B, symmetric difference, union), Partition (branch matching and non-matching rows), Slice (skip headers/footers, line ranges, every Nth row), and Append.</li>
+          <li><strong>Transform &amp; Filter:</strong> Trim (whitespace or custom symbols), Enclose (prefix/suffix), Replace (text or regex), Case (UPPER, lower, Title, Sentence, camelCase, PascalCase, snake_case, kebab-case, CONSTANT_CASE), Filter, Sort (rows or delimited items in row), Unique (deduplicate &amp; count occurrences), Number rows, Extract (column, between delimiters, or regex group), Pad / Truncate, and Template (SQL/JSON formatting with &#123;row&#125;, &#123;i&#125;, &#123;col1&#125;…).</li>
+        </ul>
+      </main>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

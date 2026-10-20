@@ -1,5 +1,7 @@
 # TextTool
 
+**Live App:** [https://chinmayacm.github.io/text-tool/](https://chinmayacm.github.io/text-tool/)
+
 TextTool is a browser-based node graph for transforming text and row-oriented data. Connect operations on the canvas, inspect a live preview at each node, and process or download the final output. The app has no backend: projects and uploaded files stay in the browser on your device.
 
 ## Start the App
