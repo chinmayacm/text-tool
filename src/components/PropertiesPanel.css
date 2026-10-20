@@ -334,3 +334,10 @@
   opacity: 0.85;
 }
 
+.properties__regex-warning {
+  font-size: 10px;
+  color: #f29a9a;
+  margin-top: 2px;
+}
+
+

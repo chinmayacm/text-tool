@@ -151,6 +151,21 @@
   margin-bottom: 8px;
 }
 
+.preview__lazy-warning {
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  border: 1px solid #5c552a;
+  background: rgba(229, 192, 123, 0.12);
+  color: #e5c07b;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.preview__lazy-warning strong {
+  color: #f6d592;
+}
+
 .preview__content {
   flex: 1;
   overflow: auto;

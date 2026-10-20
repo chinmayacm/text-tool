@@ -17,18 +17,27 @@ import { OperationNode } from "./nodes/OperationNode";
 import { getPaletteDragKind, setPaletteDragKind } from "./nodeDrag";
 import type { OperationKind } from "../types";
 
-const nodeTypes = {
+const nodeTypes: Record<OperationKind, typeof OperationNode> = {
   input: OperationNode,
   split: OperationNode,
   enclose: OperationNode,
   join: OperationNode,
   merge: OperationNode,
   unmerge: OperationNode,
+  compare: OperationNode,
+  partition: OperationNode,
+  slice: OperationNode,
   append: OperationNode,
   trim: OperationNode,
   replace: OperationNode,
   case: OperationNode,
   filter: OperationNode,
+  sort: OperationNode,
+  unique: OperationNode,
+  number: OperationNode,
+  extract: OperationNode,
+  pad: OperationNode,
+  template: OperationNode,
   output: OperationNode,
 };
 

@@ -11,14 +11,14 @@ import {
   type Viewport,
 } from "@xyflow/react";
 import { nanoid } from "nanoid";
-import { defaultParams, OPERATION_LABELS, type NodeData, type OperationKind, type OperationParams, type Rows } from "../types";
-import { readFileRows, readPreviewText, splitInputText, type PreviewDirection } from "../engine/textSource";
-import { evaluateGraph } from "../engine/evaluate";
-import { pasteClipboard, snapshotSelection, type NodeClipboard } from "./clipboard";
-import { copyInputFile, forgetInputFile, getInputFile, replaceInputFiles, setInputFile } from "./inputFiles";
-import { planMagneticConnection } from "./magnet";
-import type { ProjectSnapshot } from "./projectPersistence";
-import { createStarterGraph, GRAPH_TEMPLATES } from "../templates";
+import { defaultParams, isDualInputKind, isDualOutputKind, OPERATION_LABELS, type NodeData, type OperationKind, type OperationParams, type Rows } from "../types.ts";
+import { readFileRows, readPreviewText, splitInputText, type PreviewDirection } from "../engine/textSource.ts";
+import { evaluateGraph } from "../engine/evaluate.ts";
+import { pasteClipboard, snapshotSelection, type NodeClipboard } from "./clipboard.ts";
+import { copyInputFile, forgetInputFile, getInputFile, replaceInputFiles, setInputFile } from "./inputFiles.ts";
+import { planMagneticConnection } from "./magnet.ts";
+import type { ProjectSnapshot } from "./projectPersistence.ts";
+import { createStarterGraph, GRAPH_TEMPLATES } from "../templates.ts";
 
 export type FlowNode = Node<NodeData<OperationKind>>;
 
@@ -47,14 +47,6 @@ function isFileInput(node: FlowNode): boolean {
 
 function hasFileInput(nodes: FlowNode[]): boolean {
   return nodes.some(isFileInput);
-}
-
-function isDualInputKind(kind: OperationKind | undefined): boolean {
-  return kind === "merge" || kind === "append";
-}
-
-function isDualOutputKind(kind: OperationKind | undefined): boolean {
-  return kind === "unmerge";
 }
 
 function normalizeInputSlot(kind: OperationKind | undefined, handle: string | null | undefined): string | null {

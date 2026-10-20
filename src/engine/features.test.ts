@@ -2,7 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { applyAppend } from "./append.ts";
 import { evaluateGraph } from "./evaluate.ts";
-import { runOperation, runUnmergeOperation } from "./operations.ts";
+import {
+  runCompareOperation,
+  runExtractOperation,
+  runNumberOperation,
+  runOperation,
+  runPadOperation,
+  runPartitionOperation,
+  runSliceOperation,
+  runSortOperation,
+  runTemplateOperation,
+  runUniqueOperation,
+  runUnmergeOperation,
+} from "./operations.ts";
 import { readPreviewText, splitInputText } from "./textSource.ts";
 import { planMagneticConnection } from "../store/magnet.ts";
 import { bridgeDeletedNodes, replaceTargetInputEdge } from "../store/useGraphStore.ts";
@@ -185,5 +197,280 @@ test("unmerge splits rows at first or last occurrence into outputs A and B", () 
   assert.deepEqual(outputs.get("out-a"), ["first", "alpha"]);
   assert.deepEqual(outputs.get("out-b"), ["second", "beta"]);
 });
+
+test("sort supports rows, in-row delimiter sorting, and combined both-mode sorting", () => {
+  const baseParams = {
+    scope: "rows" as const,
+    delimiter: ",",
+    direction: "asc" as const,
+    mode: "natural" as const,
+    caseSensitive: false,
+    unique: false,
+    trimItems: true,
+  };
+
+  // 1. Sort rows vertically
+  assert.deepEqual(
+    runSortOperation(baseParams, ["cherry", "apple", "banana"]),
+    ["apple", "banana", "cherry"]
+  );
+
+  // 2. Sort single-row or multi-row text by delimiter ("a,e,g,b" -> "a,b,e,g")
+  assert.deepEqual(
+    runSortOperation({ ...baseParams, scope: "delimited", delimiter: "," }, ["a,e,g,b"]),
+    ["a,b,e,g"]
+  );
+  assert.deepEqual(
+    runSortOperation({ ...baseParams, scope: "delimited", delimiter: ",", trimItems: true }, ["z, a, m", "d, c, b"]),
+    ["a,m,z", "b,c,d"]
+  );
+
+  // 3. Sort values in each row by delimiter AND then sort rows ("both")
+  assert.deepEqual(
+    runSortOperation({ ...baseParams, scope: "both", delimiter: "," }, ["z,b,d", "c,a,e"]),
+    ["a,c,e", "b,d,z"]
+  );
+
+  // 4. Natural vs alpha vs numeric vs length + deduplication
+  assert.deepEqual(
+    runSortOperation({ ...baseParams, mode: "natural" }, ["item10", "item2", "item1"]),
+    ["item1", "item2", "item10"]
+  );
+  assert.deepEqual(
+    runSortOperation({ ...baseParams, mode: "alpha" }, ["item10", "item2", "item1"]),
+    ["item1", "item10", "item2"]
+  );
+  assert.deepEqual(
+    runSortOperation({ ...baseParams, mode: "numeric", direction: "desc" }, ["2", "10.5", "-5"]),
+    ["10.5", "2", "-5"]
+  );
+  assert.deepEqual(
+    runSortOperation({ ...baseParams, mode: "length" }, ["elephant", "cat", "dog"]),
+    ["cat", "dog", "elephant"]
+  );
+  assert.deepEqual(
+    runSortOperation({ ...baseParams, scope: "delimited", unique: true }, ["b,a,B,c,a"]),
+    ["a,b,c"]
+  );
+});
+
+test("compare, partition, slice, unique, number, extract, pad, and template nodes", () => {
+  // Compare (diff, intersect, xor, union)
+  assert.deepEqual(
+    runCompareOperation(
+      { mode: "diff", caseSensitive: false, unique: true, trimCompare: true },
+      ["apple", "banana", "carrot", "APPLE"],
+      ["banana"]
+    ),
+    ["apple", "carrot"]
+  );
+  assert.deepEqual(
+    runCompareOperation(
+      { mode: "intersect", caseSensitive: false, unique: true, trimCompare: true },
+      ["apple", "banana"],
+      ["BANANA", "date"]
+    ),
+    ["banana"]
+  );
+
+  // Partition
+  assert.deepEqual(
+    runPartitionOperation(
+      { pattern: "^ERROR", useRegex: true, caseSensitive: true },
+      ["ERROR [auth]", "INFO [api]", "ERROR [db]"]
+    ),
+    {
+      a: ["ERROR [auth]", "ERROR [db]"],
+      b: ["INFO [api]"],
+    }
+  );
+
+  // Slice (skip, range, step)
+  assert.deepEqual(
+    runSliceOperation(
+      { mode: "skip", skipStart: 1, skipEnd: 1, startLine: 1, endLine: 0, step: 2, offset: 1 },
+      ["header", "r1", "r2", "footer"]
+    ),
+    ["r1", "r2"]
+  );
+  assert.deepEqual(
+    runSliceOperation(
+      { mode: "step", skipStart: 0, skipEnd: 0, startLine: 1, endLine: 0, step: 2, offset: 1 },
+      ["a", "b", "c", "d", "e"]
+    ),
+    ["a", "c", "e"]
+  );
+
+  // Unique & frequency counts
+  assert.deepEqual(
+    runUniqueOperation(
+      { mode: "unique", caseSensitive: false, showCount: true, countPrefix: " × " },
+      ["apple", "banana", "APPLE", "apple", "carrot"]
+    ),
+    ["3 × apple", "1 × banana", "1 × carrot"]
+  );
+  assert.deepEqual(
+    runUniqueOperation(
+      { mode: "duplicates", caseSensitive: false, showCount: false, countPrefix: " × " },
+      ["apple", "banana", "APPLE"]
+    ),
+    ["apple"]
+  );
+
+  // Number rows
+  assert.deepEqual(
+    runNumberOperation(
+      { start: 1, step: 1, padWidth: 2, side: "start", separator: ". ", skipEmpty: true },
+      ["first", "", "second"]
+    ),
+    ["01. first", "", "02. second"]
+  );
+
+  // Extract (column, between, regex)
+  assert.deepEqual(
+    runExtractOperation(
+      {
+        mode: "column",
+        delimiter: ",",
+        column: 2,
+        trimValues: true,
+        startDelim: "[",
+        endDelim: "]",
+        pattern: "",
+        group: 1,
+        missingFallback: "",
+        dropUnmatched: false,
+      },
+      ["alice, eng, core", "bob, design, ui"]
+    ),
+    ["eng", "design"]
+  );
+  assert.deepEqual(
+    runExtractOperation(
+      {
+        mode: "between",
+        delimiter: ",",
+        column: 1,
+        trimValues: true,
+        startDelim: "[",
+        endDelim: "]",
+        pattern: "",
+        group: 1,
+        missingFallback: "",
+        dropUnmatched: true,
+      },
+      ["ERROR [auth] bad token", "plain line", "ERROR [db] timeout"]
+    ),
+    ["auth", "db"]
+  );
+
+  // Pad / Truncate
+  assert.deepEqual(
+    runPadOperation({ mode: "padStart", width: 5, padChar: "0", ellipsis: "…" }, ["42", "123456"]),
+    ["00042", "123456"]
+  );
+  assert.deepEqual(
+    runPadOperation({ mode: "truncate", width: 5, padChar: " ", ellipsis: "…" }, ["hello world", "hi"]),
+    ["hell…", "hi"]
+  );
+
+  // Template
+  assert.deepEqual(
+    runTemplateOperation(
+      { template: "({i}) {col1} -> {col2}", delimiter: ",", skipEmpty: true },
+      ["Alice, Engineer", "Bob, Designer"]
+    ),
+    ["(1) Alice -> Engineer", "(2) Bob -> Designer"]
+  );
+});
+
+test("enhanced existing nodes: trim collapseSpaces, enclose/join skipEmpty, replace dollar & case-insensitive, developer case modes, filter skipEmpty, and invalid regex resilience", () => {
+  // Trim collapseSpaces
+  assert.deepEqual(
+    runOperation(
+      { kind: "trim", label: "Trim", params: { mode: "both", chars: "", collapseSpaces: true } },
+      ["  hello    world   again  "]
+    ),
+    ["hello world again"]
+  );
+
+  // Enclose skipEmpty & escape decoding
+  assert.deepEqual(
+    runOperation(
+      { kind: "enclose", label: "Enclose", params: { prefix: "'", suffix: "'", skipEmpty: true } },
+      ["apple", "", "banana"]
+    ),
+    ["'apple'", "", "'banana'"]
+  );
+
+  // Join skipEmpty & escape decoding
+  assert.deepEqual(
+    runOperation(
+      { kind: "join", label: "Join", params: { delimiter: "\\t", skipEmpty: true } },
+      ["apple", "", "banana"]
+    ),
+    ["apple\tbanana"]
+  );
+
+  // Replace case-insensitive + literal $ safety when useRegex is false
+  assert.deepEqual(
+    runOperation(
+      {
+        kind: "replace",
+        label: "Replace",
+        params: { find: "price", replaceWith: "$100", useRegex: false, all: true, caseSensitive: false },
+      },
+      ["PRICE is price"]
+    ),
+    ["$100 is $100"]
+  );
+
+  // Case developer modes (camel, pascal, snake, kebab, constant)
+  assert.deepEqual(
+    runOperation({ kind: "case", label: "Case", params: { mode: "camel" } }, ["First Name_ID"]),
+    ["firstNameId"]
+  );
+  assert.deepEqual(
+    runOperation({ kind: "case", label: "Case", params: { mode: "snake" } }, ["firstNameID"]),
+    ["first_name_id"]
+  );
+  assert.deepEqual(
+    runOperation({ kind: "case", label: "Case", params: { mode: "kebab" } }, ["Hello World"]),
+    ["hello-world"]
+  );
+  assert.deepEqual(
+    runOperation({ kind: "case", label: "Case", params: { mode: "constant" } }, ["api base url"]),
+    ["API_BASE_URL"]
+  );
+
+  // Filter skipEmpty + case-insensitive default
+  assert.deepEqual(
+    runOperation(
+      {
+        kind: "filter",
+        label: "Filter",
+        params: { pattern: "error", useRegex: false, invert: false, caseSensitive: false, skipEmpty: true },
+      },
+      ["", "ERROR: timeout", "info: ok", "   "]
+    ),
+    ["ERROR: timeout"]
+  );
+
+  // Invalid regex falls back safely without throwing
+  assert.deepEqual(
+    runOperation(
+      {
+        kind: "filter",
+        label: "Filter",
+        params: { pattern: "[unclosed", useRegex: true, invert: false },
+      },
+      ["has [unclosed bracket", "other"]
+    ),
+    ["has [unclosed bracket"]
+  );
+});
+
+
+
 
 

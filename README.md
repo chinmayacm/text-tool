@@ -22,7 +22,7 @@ npm run preview
 
 ## Basic Workflow
 
-1. A fresh project starts with an **Input** node connected to an **Output** node—or expand **Templates** in the sidebar to load a ready-made pipeline (**Rows to Quoted List**, **Quoted List to Rows**, **Clean & Filter Lines**, **Merge Two Lists**, or **Unmerge JSON Key-Values**).
+1. A fresh project starts with an **Input** node connected to an **Output** node—or expand **Templates** in the sidebar to load a ready-made pipeline (**Rows to Quoted List**, **Quoted List to Rows**, **Clean & Filter Lines**, **Merge Two Lists**, **Unmerge JSON Key-Values**, **Sort & Deduplicate Tag Rows**, **Compare Two Lists (A − B)**, **CSV Columns to SQL Inserts**, or **Partition & Count Log Errors**).
 2. Drag operation nodes from the **Nodes** section onto the canvas (or drop them directly onto an existing connection line to splice them in). Nodes in the sidebar are grouped by role (**I/O**, **Structure & Combine**, and **Transform & Filter**), and hovering over any node for a moment shows a short description of what it does.
 3. Select a node to edit its settings in the **Properties** panel (hover the `?` icon in the Properties header for a quick summary of the node type) and inspect its result in **Preview**.
 4. Click **Process Now** on the **Output** node to evaluate the full graph, then copy or download the result.
@@ -53,11 +53,11 @@ Split each input row into multiple vertical rows. Enter a delimiter such as `,`,
 
 ### Join
 
-Combine all input rows into one row, placing the configured **Delimiter** between them. For example, joining `apple`, `banana`, and `carrot` with `, ` produces `apple, banana, carrot`.
+Combine all input rows into one row, placing the configured **Delimiter** between them (supports `\n` and `\t` escapes). For example, joining `apple`, `banana`, and `carrot` with `, ` produces `apple, banana, carrot`. Enable **Skip empty rows before joining** to ignore blank rows so double delimiters do not appear.
 
 ### Merge
 
-Merge two connected inputs row by row. Connect the primary input to the blue **A** handle and the second input to the amber **B** handle (each row inside the node also displays the connected upstream node's name). Set the **Join Delimiter** to the text between each pair, and optionally set a **Fallback for missing row**.
+Merge two connected inputs row by row. Connect the primary input to the blue **A** handle and the second input to the amber **B** handle (each row inside the node also displays the connected upstream node's name). Set the **Join Delimiter** (supports `\n` and `\t`) to the text between each pair, and optionally set a **Fallback for missing row**.
 
 If one input contains one row and the other contains several, the single row is repeated for each row of the longer input. Otherwise, the longer input determines the result length and missing values use the fallback.
 
@@ -71,6 +71,32 @@ Split each input row horizontally into two parallel outputs—the exact inverse 
 - **Fallback for missing delimiter (Output B)**: if a row does not contain the delimiter, Output A keeps the full row and Output B receives this fallback value (blank by default) so row indices remain aligned across both outputs.
 - **Splitting into 3+ columns**: because Output B holds the rest of the row after the first delimiter, you can chain another **Unmerge** node onto Output B to split into three or more columns.
 
+### Compare
+
+Compare two connected row lists (**Input A** and **Input B**) using standard set operations:
+
+- **Difference (`A − B`)**: keep rows in Input A that do not appear in Input B.
+- **Intersection (`A ∩ B`)**: keep rows present in both Input A and Input B.
+- **Symmetric difference (`A Δ B`)**: keep rows that appear in only one of the two inputs.
+- **Union (`A ∪ B`)**: combine all rows from Input A followed by Input B.
+- **Case sensitive**, **Ignore outer whitespace when comparing**, and **Deduplicate output rows** toggles.
+
+### Partition
+
+Route rows into two parallel outputs based on a pattern match—acting like a non-destructive **Filter** with two branches:
+
+- **Output A** (blue **A** handle): receives rows that match **Pattern**.
+- **Output B** (amber **B** handle): receives rows that do not match **Pattern**.
+- Supports literal text or regular expressions (**Treat pattern as regex**) and **Case sensitive** matching.
+
+### Slice
+
+Keep a subset of rows by position or step:
+
+- **Skip ends**: skip the first $N$ rows (e.g., CSV header) and/or last $N$ rows (e.g., footer).
+- **Line range**: keep lines from **Start line** to **End line** (1-based, inclusive; `0` = until the end).
+- **Every Nth**: sample every $N$th row starting from a 1-based offset line.
+
 ### Append
 
 Append uses connected **Input A** as the main rows and **Input B** as the added text. If B is not connected or has no rows, it uses the **Static text** field. A non-empty B input takes precedence over static text.
@@ -83,23 +109,71 @@ Choose a scope and side:
 
 ### Trim
 
-Remove leading and/or trailing whitespace—or custom user-defined symbols—from every row. Choose **Both ends**, **Start only**, or **End only**, and optionally specify **Characters to trim** (for example `{}, ` or `'"`). Any character you type into **Characters to trim** is stripped from the selected ends of each row in a single pass; leave it empty to strip whitespace by default.
+Remove leading and/or trailing whitespace—or custom user-defined symbols—from every row. Choose **Both ends**, **Start only**, or **End only**, and optionally specify **Characters to trim** (for example `{}, ` or `'"`). Any character you type into **Characters to trim** is stripped from the selected ends of each row in a single pass; leave it empty to strip whitespace by default. Turn on **Collapse multiple internal spaces to one** to normalize repeated spaces/tabs inside each row into a single space.
 
 ### Enclose
 
-Add a **Prefix** and **Suffix** to every row. For example, prefix `"` and suffix `"` turns `apple` into `"apple"`.
+Add a **Prefix** and **Suffix** (supporting `\n` and `\t` escapes) to every row. For example, prefix `"` and suffix `"` turns `apple` into `"apple"`. Enable **Skip empty rows** to leave blank rows untouched instead of wrapping them into empty quotes.
 
 ### Replace
 
-Set **Find** and **Replace with** to substitute text in every row. By default, Find is literal text; enable **Treat find as regex** to use a JavaScript regular expression. **Replace all occurrences** is enabled by default. Turn it off to replace only the first match in each row.
+Set **Find** and **Replace with** (supporting `\n` and `\t` escapes) to substitute text in every row. By default, Find is literal text (and literal `$` symbols in **Replace with** are preserved safely); enable **Treat find as regex** to use a JavaScript regular expression with `$1`, `$2` capture groups. Toggle **Case sensitive** or **Replace all occurrences** as needed.
 
 ### Case
 
-Choose **UPPER CASE**, **lower case**, **Title Case**, or **Sentence case**. Title Case capitalizes the start of each word. Sentence case capitalizes the first word and the first word after `.`, `!`, or `?`.
+Choose **UPPER CASE**, **lower case**, **Title Case**, **Sentence case**, or developer identifier formats: **camelCase**, **PascalCase**, **snake_case**, **kebab-case**, and **CONSTANT_CASE**.
 
 ### Filter
 
-Keep only rows matching **Pattern**, or enable **Treat pattern as regex** to use a JavaScript regular expression. Turn on **Invert (exclude matches)** to remove matching rows instead. An empty pattern leaves all rows unchanged.
+Keep only rows matching **Pattern**, or enable **Treat pattern as regex** to use a JavaScript regular expression. Toggle **Case sensitive**, **Invert (exclude matches)**, or **Remove empty / blank rows** (which can also be used on its own with an empty pattern to strip blank lines).
+
+### Sort
+
+Sort rows vertically, sort delimited values inside each row, or both:
+
+- **Scope**:
+  - **Rows**: sorts the list of rows vertically.
+  - **By delimiter**: splits each row (or a single-line string like `a,e,g,b`) by the configured **In-row delimiter**, sorts the items inside that row (`a,b,e,g`), and joins them back.
+  - **Both**: first sorts the delimited values inside every row, and then sorts all resulting rows vertically.
+- **Trim whitespace around delimited items**: enabled by default when sorting by delimiter so inputs like `a, e, g, b` sort cleanly without leading spaces skewing the order.
+- **Order**: choose **Ascending (A → Z)** or **Descending (Z → A)**.
+- **Comparison mode**: choose **Natural** (`item2 < item10`), **Alphabetical** (standard ASCII / lexicographical order), **Numeric** (`-5 < 2 < 10.5`), or **Length** (shortest to longest).
+- **Case sensitive** & **Remove duplicates (unique)**: toggle case-sensitive comparison or deduplicate identical rows/items while sorting.
+
+### Unique
+
+Deduplicate rows in their original order of appearance or filter by frequency:
+
+- **Deduplicate**: keep the first occurrence of every distinct row.
+- **Duplicates**: keep only rows that appear 2 or more times.
+- **Singles only**: keep only rows that appear once.
+- **Prepend occurrence count**: prefix each output row with its count and a configurable **Count separator** (for example `3 × apple`).
+
+### Number
+
+Add sequential numbering to the **Prefix (start)** or **Suffix (end)** of each row, with configurable **Start number**, **Step increment**, **Zero-pad width** (e.g., `2` produces `01`, `02`), **Separator** (e.g., `. `), and **Skip empty rows**.
+
+### Extract
+
+Pull out a specific part of each row using one of three modes:
+
+- **Column**: split each row by **Delimiter** and pick a 1-based **Column number** (or negative to count from the end, e.g., `-1` for the last column).
+- **Between**: extract the substring between **Start delimiter** and **End delimiter** (for example between `[` and `]`).
+- **Regex**: extract a regular expression match or specific **Capture group** (`0` = full match, `1+` = group).
+- Rows without a match can either be dropped (**Drop rows without a match**) or replaced with **Fallback when not found**.
+
+### Pad / Cut
+
+Pad rows to a fixed character width (**Pad end**, **Pad start**, or **Pad both** using a **Pad character**) or **Truncate to max width** with an optional **Ellipsis suffix** (`…`).
+
+### Template
+
+Format each row into a custom string pattern using placeholders:
+
+- `{row}` — the full input row
+- `{i}` — 1-based row number (`1`, `2`, `3`…)
+- `{i0}` — 0-based row number (`0`, `1`, `2`…)
+- `{col1}`, `{col2}`, `{col3}`… — columns split by the configured **Column delimiter**
 
 ### Output
 
@@ -118,6 +192,7 @@ Select any node to view its output in the Preview panel:
 - **Output A / Output B toggle**: when an **Unmerge** node is selected, switch between inspecting **Output A** and **Output B**.
 - **Head / Tail & Limit controls**: choose **Head** (first items) or **Tail** (last items), and pick a row limit (`5`, `10`, `50`, `Custom`, or `All rows`) for multiline results or a character limit (`100`, `500`, `1000`, `Custom`, or `All chars`) for single-line results. Both **Head** and **Tail** slices are evaluated lazily from the start or end of the input.
 - **Lazy vs. Full status badge**: the header badge shows **`Lazy`** when a row/character limit is active, switches to **`Full`** when `All` is selected on pasted text, and shows **`Lazy (Cap)`** when `All` is selected with a file input (since live file previews stay capped until **Process Now** is clicked).
+- **Lazy sort notice**: when inspecting a **Sort** node (or any node downstream of **Sort**) while preview is in **Lazy** mode, a notice banner reminds you that only the sampled preview slice is sorted and that the final full-dataset order may differ until you select **All** or click **Process Now**.
 
 The Preview panel can copy or download the currently displayed preview without running full processing.
 

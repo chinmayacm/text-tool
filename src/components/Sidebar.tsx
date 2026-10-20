@@ -20,12 +20,12 @@ const NODE_GROUPS: Array<{ label: string; group: string; kinds: OperationKind[] 
   {
     label: "Structure & Combine",
     group: "structure",
-    kinds: ["split", "join", "merge", "unmerge", "append"],
+    kinds: ["split", "join", "merge", "unmerge", "compare", "partition", "slice", "append"],
   },
   {
     label: "Transform & Filter",
     group: "transform",
-    kinds: ["trim", "enclose", "replace", "case", "filter"],
+    kinds: ["trim", "enclose", "replace", "case", "filter", "sort", "unique", "number", "extract", "pad", "template"],
   },
 ];
 

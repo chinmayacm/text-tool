@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { isDualOutputKind } from "../types";
 import {
   useGraphStore,
   type PreviewCharLimitMode,
@@ -11,6 +12,7 @@ export function PreviewPanel() {
   const [outputSlot, setOutputSlot] = useState<"a" | "b">("a");
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
   const nodes = useGraphStore((s) => s.nodes);
+  const edges = useGraphStore((s) => s.edges);
   const outputs = useGraphStore((s) => s.outputs);
 
   const previewRowLimitMode = useGraphStore((s) => s.previewRowLimitMode);
@@ -23,9 +25,9 @@ export function PreviewPanel() {
   const setPreviewDirection = useGraphStore((s) => s.setPreviewDirection);
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId);
-  const isUnmerge = selectedNode?.data.kind === "unmerge";
+  const isDualOutput = isDualOutputKind(selectedNode?.data.kind);
   const rows = selectedNodeId
-    ? (isUnmerge ? outputs.get(`${selectedNodeId}:${outputSlot}`) : outputs.get(selectedNodeId)) ?? []
+    ? (isDualOutput ? outputs.get(`${selectedNodeId}:${outputSlot}`) : outputs.get(selectedNodeId)) ?? []
     : [];
 
   const isSingleLine = rows.length <= 1;
@@ -35,6 +37,7 @@ export function PreviewPanel() {
   );
   const isLazy = !isAllSelected || hasFileInput;
   const prefixLabel = previewDirection === "tail" ? "Last" : "First";
+  const dependsOnSort = selectedNodeId ? nodeDependsOnSort(selectedNodeId, nodes, edges) : false;
 
   function copyToClipboard() {
     navigator.clipboard.writeText(rows.join("\n"));
@@ -43,7 +46,7 @@ export function PreviewPanel() {
   function download() {
     const filename = selectedNode?.data.kind === "output"
       ? (selectedNode.data.params as { filename?: string }).filename || "preview.txt"
-      : `${selectedNode?.data.label || "preview"}${isUnmerge ? `-${outputSlot.toUpperCase()}` : ""}.txt`;
+      : `${selectedNode?.data.label || "preview"}${isDualOutput ? `-${outputSlot.toUpperCase()}` : ""}.txt`;
 
     const blob = new Blob([rows.join("\n")], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
@@ -85,21 +88,21 @@ export function PreviewPanel() {
             </span>
           </div>
 
-          {isUnmerge && (
+          {isDualOutput && (
             <div className="preview__slot-switch" role="group" aria-label="Preview output port">
               <button
                 type="button"
                 className={outputSlot === "a" ? "is-active preview__slot-btn--a" : "preview__slot-btn--a"}
                 onClick={() => setOutputSlot("a")}
               >
-                Output A
+                {selectedNode?.data.kind === "partition" ? "Output A (Matched)" : "Output A"}
               </button>
               <button
                 type="button"
                 className={outputSlot === "b" ? "is-active preview__slot-btn--b" : "preview__slot-btn--b"}
                 onClick={() => setOutputSlot("b")}
               >
-                Output B
+                {selectedNode?.data.kind === "partition" ? "Output B (Unmatched)" : "Output B"}
               </button>
             </div>
           )}
@@ -180,6 +183,12 @@ export function PreviewPanel() {
               : `${rows[0]?.length ?? 0} char(s) loaded${isLazy ? ` (${previewDirection})` : ""}`}
           </div>
 
+          {isLazy && dependsOnSort && (
+            <div className="preview__lazy-warning" role="status">
+              <strong>Lazy sort notice:</strong> Preview sorts only the sampled {previewDirection} slice. Final output may differ—select <strong>All</strong> or run <strong>Process Now</strong> for full sorting.
+            </div>
+          )}
+
           <pre className="preview__content">{rows.join("\n") || "(empty)"}</pre>
 
           <div className="preview__actions">
@@ -193,3 +202,27 @@ export function PreviewPanel() {
     </aside>
   );
 }
+
+function nodeDependsOnSort(
+  nodeId: string,
+  nodes: Array<{ id: string; data: { kind: string } }>,
+  edges: Array<{ source: string; target: string }>
+): boolean {
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  const visited = new Set<string>();
+  const stack = [nodeId];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const kind = nodeById.get(current)?.data.kind;
+    if (kind === "sort" || kind === "unique" || kind === "compare") return true;
+    for (const edge of edges) {
+      if (edge.target === current && !visited.has(edge.source)) {
+        stack.push(edge.source);
+      }
+    }
+  }
+  return false;
+}
+

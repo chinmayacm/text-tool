@@ -1,4 +1,4 @@
-import type { OperationKind } from "../types";
+import { isDualInputKind, isDualOutputKind, type OperationKind } from "../types.ts";
 
 export type MagnetNode = {
   id: string;
@@ -44,10 +44,10 @@ export function planMagneticConnection(
   if (source.kind === "output" || dest.kind === "input") return null;
   if (reaches(edges, dest.id, source.id)) return null;
 
-  const targetHandle = dest.kind === "merge" || dest.kind === "append"
+  const targetHandle = isDualInputKind(dest.kind)
     ? ((dest.id === hovered.id ? hoveredHandle : draggedHandle) ?? "a")
     : null;
-  if (source.kind === "unmerge") {
+  if (isDualOutputKind(source.kind)) {
     const sourceHandle = (source.id === hovered.id ? hoveredHandle : draggedHandle) ?? "a";
     return { source: source.id, target: dest.id, sourceHandle, targetHandle };
   }

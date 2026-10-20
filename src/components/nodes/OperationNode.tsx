@@ -1,6 +1,6 @@
 import { useEffect, type CSSProperties } from "react";
 import { Handle, Position, useUpdateNodeInternals, type Edge, type NodeProps } from "@xyflow/react";
-import { summarizeNode, type NodeData, type OperationKind } from "../../types";
+import { isDualInputKind, isDualOutputKind, summarizeNode, type NodeData, type OperationKind } from "../../types";
 import { useGraphStore, type FlowNode } from "../../store/useGraphStore";
 import "./OperationNode.css";
 
@@ -91,7 +91,7 @@ function computeHandleLayoutKey(nodeId: string, kind: OperationKind, nodes: Flow
 
   const items: RawItem[] = [];
 
-  if (kind === "merge" || kind === "append") {
+  if (isDualInputKind(kind)) {
     const edgeA = edges.find((e) => e.target === nodeId && (e.targetHandle === "a" || !e.targetHandle));
     const edgeB = edges.find((e) => e.target === nodeId && e.targetHandle === "b");
     const vecA = neighborVector(edgeA?.source);
@@ -123,7 +123,7 @@ function computeHandleLayoutKey(nodeId: string, kind: OperationKind, nodes: Flow
       sortY: sourceNeighborY,
       order: 2,
     });
-  } else if (kind === "unmerge") {
+  } else if (isDualOutputKind(kind)) {
     const incoming = edges.find((e) => e.target === nodeId);
     const vecIn = neighborVector(incoming?.source);
     const outA = edges.filter((e) => e.source === nodeId && (e.sourceHandle === "a" || !e.sourceHandle));
@@ -205,8 +205,8 @@ function computeHandleLayoutKey(nodeId: string, kind: OperationKind, nodes: Flow
     const isHorizontalEdge = side === Position.Top || side === Position.Bottom;
     if (
       !isHorizontalEdge &&
-      (((kind === "merge" || kind === "append") && !group.some((item) => item.id === "source")) ||
-        (kind === "unmerge" && !group.some((item) => item.id === "target")))
+      ((isDualInputKind(kind) && !group.some((item) => item.id === "source")) ||
+        (isDualOutputKind(kind) && !group.some((item) => item.id === "target")))
     ) {
       for (const item of group) {
         offsets.set(item.id, item.id === "a" ? "48px" : "70px");
@@ -237,7 +237,7 @@ function computeHandleLayoutKey(nodeId: string, kind: OperationKind, nodes: Flow
     return `${id}:${side}:${offset}`;
   };
 
-  const defaultDualSide = kind === "unmerge" ? Position.Right : Position.Left;
+  const defaultDualSide = isDualOutputKind(kind) ? Position.Right : Position.Left;
   return [
     lookup("target", Position.Left),
     lookup("a", defaultDualSide),
@@ -300,14 +300,14 @@ export function OperationNode({ id, data, selected }: Props) {
   const layout = parseHandleLayout(handleLayoutKey);
 
   const dualSlotLabelsKey = useGraphStore((s) => {
-    if (kind === "merge" || kind === "append") {
+    if (isDualInputKind(kind)) {
       const edgeA = s.edges.find((e) => e.target === id && (e.targetHandle === "a" || !e.targetHandle));
       const edgeB = s.edges.find((e) => e.target === id && e.targetHandle === "b");
       const labelA = edgeA ? (s.nodes.find((n) => n.id === edgeA.source)?.data.label ?? "") : "";
       const labelB = edgeB ? (s.nodes.find((n) => n.id === edgeB.source)?.data.label ?? "") : "";
       return `${labelA}|${labelB}`;
     }
-    if (kind === "unmerge") {
+    if (isDualOutputKind(kind)) {
       const edgeA = s.edges.find((e) => e.source === id && (e.sourceHandle === "a" || !e.sourceHandle));
       const edgeB = s.edges.find((e) => e.source === id && e.sourceHandle === "b");
       const labelA = edgeA ? (s.nodes.find((n) => n.id === edgeA.target)?.data.label ?? "") : "";
@@ -331,7 +331,7 @@ export function OperationNode({ id, data, selected }: Props) {
 
   return (
     <div className={`op-node op-node--${kind} ${selected ? "op-node--selected" : ""}`}>
-      {kind === "merge" || kind === "append" ? (
+      {isDualInputKind(kind) ? (
         <>
           <Handle
             type="target"
@@ -388,19 +388,31 @@ export function OperationNode({ id, data, selected }: Props) {
           {outputMode === "rows" ? "Rows" : outputMode === "single" ? "Single" : "Empty"}
         </span>
       </div>
-      {kind === "merge" || kind === "append" || kind === "unmerge" ? (
+      {isDualInputKind(kind) || isDualOutputKind(kind) ? (
         <div className="op-node__merge-body">
           <div className="op-node__merge-row">
             <span className="op-node__handle-tag op-node__handle-tag--a">A</span>
             <span className="op-node__merge-desc">
-              {kind === "append" ? "Main Input" : kind === "unmerge" ? "Output A" : "Input A"}
+              {kind === "append"
+                ? "Main Input"
+                : kind === "partition"
+                  ? "Matched (A)"
+                  : isDualOutputKind(kind)
+                    ? "Output A"
+                    : "Input A"}
               {slotLabelA ? ` · ${slotLabelA}` : ""}
             </span>
           </div>
           <div className="op-node__merge-row">
             <span className="op-node__handle-tag op-node__handle-tag--b">B</span>
             <span className="op-node__merge-desc">
-              {kind === "append" ? "Append Data" : kind === "unmerge" ? "Output B" : "Input B"}
+              {kind === "append"
+                ? "Append Data"
+                : kind === "partition"
+                  ? "Unmatched (B)"
+                  : isDualOutputKind(kind)
+                    ? "Output B"
+                    : "Input B"}
               {slotLabelB ? ` · ${slotLabelB}` : ""}
             </span>
           </div>
@@ -425,7 +437,7 @@ export function OperationNode({ id, data, selected }: Props) {
       ) : (
         <div className="op-node__summary">{summarizeNode(data)}</div>
       )}
-      {kind === "unmerge" ? (
+      {isDualOutputKind(kind) ? (
         <>
           <Handle
             type="source"
@@ -433,7 +445,7 @@ export function OperationNode({ id, data, selected }: Props) {
             id="a"
             style={placementStyle(layout.a)}
             className="op-node__handle op-node__handle--source op-node__handle--a"
-            title="Output A (left of delimiter)"
+            title={kind === "partition" ? "Output A (matched rows)" : "Output A (left of delimiter)"}
           >
             <span className="op-node__handle-label" aria-hidden="true">
               A{triangleForHandle("source", layout.a.side)}
@@ -445,7 +457,7 @@ export function OperationNode({ id, data, selected }: Props) {
             id="b"
             style={placementStyle(layout.b)}
             className="op-node__handle op-node__handle--source op-node__handle--b"
-            title="Output B (right of delimiter)"
+            title={kind === "partition" ? "Output B (unmatched rows)" : "Output B (right of delimiter)"}
           >
             <span className="op-node__handle-label" aria-hidden="true">
               B{triangleForHandle("source", layout.b.side)}

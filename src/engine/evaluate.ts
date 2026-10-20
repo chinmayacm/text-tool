@@ -1,6 +1,6 @@
 import type { Edge, Node } from "@xyflow/react";
-import type { NodeData, OperationKind, OperationParams, Rows } from "../types";
-import { runOperation, runUnmergeOperation, type EvaluateOptions } from "./operations";
+import { isDualInputKind, isDualOutputKind, type NodeData, type OperationKind, type OperationParams, type Rows } from "../types.ts";
+import { runOperation, runPartitionOperation, runUnmergeOperation, type EvaluateOptions } from "./operations.ts";
 
 export type InputRowsById = Map<string, Rows>;
 
@@ -37,7 +37,7 @@ export function evaluateGraph(
     if (!edge) return [];
     const primary = resolve(edge.source);
     const sourceNode = nodeById.get(edge.source);
-    if (sourceNode?.data.kind === "unmerge" && edge.sourceHandle === "b") {
+    if (isDualOutputKind(sourceNode?.data.kind) && edge.sourceHandle === "b") {
       return outputs.get(`${edge.source}:b`) ?? [];
     }
     return primary;
@@ -54,7 +54,7 @@ export function evaluateGraph(
     const inc = incoming.get(id) ?? [];
     let result: Rows = [];
 
-    if (node.data.kind === "merge" || node.data.kind === "append") {
+    if (isDualInputKind(node.data.kind)) {
       const edgeA = inc.find((e) => e.targetHandle === "a") || inc[0];
       const edgeB = inc.find((e) => e.targetHandle === "b") || (inc[0] === edgeA ? inc[1] : inc[0]);
       const inputA = resolveEdge(edgeA);
@@ -64,6 +64,16 @@ export function evaluateGraph(
       const input = inc.length > 0 ? resolveEdge(inc[0]) : [];
       const { a, b } = runUnmergeOperation(
         node.data.params as OperationParams["unmerge"],
+        input,
+        optionsFor(node, options)
+      );
+      outputs.set(`${id}:a`, a);
+      outputs.set(`${id}:b`, b);
+      result = a;
+    } else if (node.data.kind === "partition") {
+      const input = inc.length > 0 ? resolveEdge(inc[0]) : [];
+      const { a, b } = runPartitionOperation(
+        node.data.params as OperationParams["partition"],
         input,
         optionsFor(node, options)
       );

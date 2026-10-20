@@ -1,4 +1,5 @@
 import { useRef, type RefObject } from "react";
+import { isValidRegex } from "../engine/operations";
 import { formatBytes } from "../engine/textSource";
 import { useGraphStore } from "../store/useGraphStore";
 import { OPERATION_DESCRIPTIONS, OPERATION_LABELS, type NodeData, type OperationParams } from "../types";
@@ -104,6 +105,9 @@ export function PropertiesPanel() {
                 value={(data.params as NodeData<"split">["params"]).delimiter}
                 recognizeEscapes={!(data.params as NodeData<"split">["params"]).useRegex}
               />
+              {(data.params as NodeData<"split">["params"]).useRegex && (
+                <RegexWarning pattern={(data.params as NodeData<"split">["params"]).delimiter} />
+              )}
             </label>
             <label className="properties__checkbox">
               <input
@@ -125,7 +129,7 @@ export function PropertiesPanel() {
                 value={(data.params as NodeData<"enclose">["params"]).prefix}
                 onChange={(e) => set({ prefix: e.target.value })}
               />
-              <CharTokens value={(data.params as NodeData<"enclose">["params"]).prefix} />
+              <CharTokens value={(data.params as NodeData<"enclose">["params"]).prefix} recognizeEscapes />
             </label>
             <label>
               Suffix
@@ -133,7 +137,15 @@ export function PropertiesPanel() {
                 value={(data.params as NodeData<"enclose">["params"]).suffix}
                 onChange={(e) => set({ suffix: e.target.value })}
               />
-              <CharTokens value={(data.params as NodeData<"enclose">["params"]).suffix} />
+              <CharTokens value={(data.params as NodeData<"enclose">["params"]).suffix} recognizeEscapes />
+            </label>
+            <label className="properties__checkbox">
+              <input
+                type="checkbox"
+                checked={(data.params as NodeData<"enclose">["params"]).skipEmpty ?? false}
+                onChange={(e) => set({ skipEmpty: e.target.checked })}
+              />
+              Skip empty rows
             </label>
             <p className="properties__note">Prefix/suffix are applied to every row individually.</p>
           </>
@@ -147,7 +159,15 @@ export function PropertiesPanel() {
                 value={(data.params as NodeData<"join">["params"]).delimiter}
                 onChange={(e) => set({ delimiter: e.target.value })}
               />
-              <CharTokens value={(data.params as NodeData<"join">["params"]).delimiter} />
+              <CharTokens value={(data.params as NodeData<"join">["params"]).delimiter} recognizeEscapes />
+            </label>
+            <label className="properties__checkbox">
+              <input
+                type="checkbox"
+                checked={(data.params as NodeData<"join">["params"]).skipEmpty ?? false}
+                onChange={(e) => set({ skipEmpty: e.target.checked })}
+              />
+              Skip empty rows before joining
             </label>
             <p className="properties__note">All input rows are combined into a single output row.</p>
           </>
@@ -161,7 +181,7 @@ export function PropertiesPanel() {
                 value={(data.params as NodeData<"merge">["params"]).delimiter}
                 onChange={(e) => set({ delimiter: e.target.value })}
               />
-              <CharTokens value={(data.params as NodeData<"merge">["params"]).delimiter} />
+              <CharTokens value={(data.params as NodeData<"merge">["params"]).delimiter} recognizeEscapes />
             </label>
             <label>
               Fallback for missing row
@@ -212,6 +232,91 @@ export function PropertiesPanel() {
           </>
         )}
 
+        {kind === "compare" && (
+          <>
+            <label>
+              Set operation
+              <select
+                value={(data.params as NodeData<"compare">["params"]).mode}
+                onChange={(e) =>
+                  set({ mode: e.target.value as NodeData<"compare">["params"]["mode"] })
+                }
+              >
+                <option value="diff">Difference (A − B: in A, not in B)</option>
+                <option value="intersect">Intersection (A ∩ B: in both A and B)</option>
+                <option value="xor">Symmetric difference (A Δ B: only in one)</option>
+                <option value="union">Union (A ∪ B: combine A and B)</option>
+              </select>
+            </label>
+            <label className="properties__checkbox">
+              <input
+                type="checkbox"
+                checked={(data.params as NodeData<"compare">["params"]).caseSensitive}
+                onChange={(e) => set({ caseSensitive: e.target.checked })}
+              />
+              Case sensitive
+            </label>
+            <label className="properties__checkbox">
+              <input
+                type="checkbox"
+                checked={(data.params as NodeData<"compare">["params"]).trimCompare}
+                onChange={(e) => set({ trimCompare: e.target.checked })}
+              />
+              Ignore outer whitespace when comparing
+            </label>
+            <label className="properties__checkbox">
+              <input
+                type="checkbox"
+                checked={(data.params as NodeData<"compare">["params"]).unique}
+                onChange={(e) => set({ unique: e.target.checked })}
+              />
+              Deduplicate output rows
+            </label>
+            <p className="properties__note">
+              Connect the primary list to Input A and the comparison list to Input B.
+            </p>
+          </>
+        )}
+
+        {kind === "partition" && (
+          <>
+            <label>
+              Pattern
+              <input
+                value={(data.params as NodeData<"partition">["params"]).pattern}
+                onChange={(e) => set({ pattern: e.target.value })}
+                placeholder="Text or regex to match…"
+              />
+              {(data.params as NodeData<"partition">["params"]).useRegex && (
+                <RegexWarning pattern={(data.params as NodeData<"partition">["params"]).pattern} />
+              )}
+            </label>
+            <label className="properties__checkbox">
+              <input
+                type="checkbox"
+                checked={(data.params as NodeData<"partition">["params"]).useRegex}
+                onChange={(e) => set({ useRegex: e.target.checked })}
+              />
+              Treat pattern as regex
+            </label>
+            <label className="properties__checkbox">
+              <input
+                type="checkbox"
+                checked={(data.params as NodeData<"partition">["params"]).caseSensitive}
+                onChange={(e) => set({ caseSensitive: e.target.checked })}
+              />
+              Case sensitive
+            </label>
+            <p className="properties__note">
+              Routes matching rows to <strong>Output A</strong> and non-matching rows to <strong>Output B</strong> so you can process both branches in parallel.
+            </p>
+          </>
+        )}
+
+        {kind === "slice" && (
+          <SliceFields params={data.params as NodeData<"slice">["params"]} set={set} />
+        )}
+
         {kind === "append" && (
           <AppendFields params={data.params as NodeData<"append">["params"]} set={set} />
         )}
@@ -241,6 +346,14 @@ export function PropertiesPanel() {
                 emptyLabel="␣ whitespace (default)"
               />
             </label>
+            <label className="properties__checkbox">
+              <input
+                type="checkbox"
+                checked={(data.params as NodeData<"trim">["params"]).collapseSpaces ?? false}
+                onChange={(e) => set({ collapseSpaces: e.target.checked })}
+              />
+              Collapse multiple internal spaces to one
+            </label>
             <p className="properties__note">
               Enter multiple symbols at once (e.g. <code>&#123;&#125; </code> or <code>&apos;&quot;-</code>) to strip any of them from{" "}
               {(data.params as NodeData<"trim">["params"]).mode === "both"
@@ -259,6 +372,13 @@ export function PropertiesPanel() {
                 value={(data.params as NodeData<"replace">["params"]).find}
                 onChange={(e) => set({ find: e.target.value })}
               />
+              <CharTokens
+                value={(data.params as NodeData<"replace">["params"]).find}
+                recognizeEscapes={!(data.params as NodeData<"replace">["params"]).useRegex}
+              />
+              {(data.params as NodeData<"replace">["params"]).useRegex && (
+                <RegexWarning pattern={(data.params as NodeData<"replace">["params"]).find} />
+              )}
             </label>
             <label>
               Replace with
@@ -266,6 +386,7 @@ export function PropertiesPanel() {
                 value={(data.params as NodeData<"replace">["params"]).replaceWith}
                 onChange={(e) => set({ replaceWith: e.target.value })}
               />
+              <CharTokens value={(data.params as NodeData<"replace">["params"]).replaceWith} recognizeEscapes />
             </label>
             <label className="properties__checkbox">
               <input
@@ -274,6 +395,14 @@ export function PropertiesPanel() {
                 onChange={(e) => set({ useRegex: e.target.checked })}
               />
               Treat find as regex
+            </label>
+            <label className="properties__checkbox">
+              <input
+                type="checkbox"
+                checked={(data.params as NodeData<"replace">["params"]).caseSensitive ?? true}
+                onChange={(e) => set({ caseSensitive: e.target.checked })}
+              />
+              Case sensitive
             </label>
             <label className="properties__checkbox">
               <input
@@ -292,13 +421,18 @@ export function PropertiesPanel() {
             <select
               value={(data.params as NodeData<"case">["params"]).mode}
               onChange={(e) =>
-                set({ mode: e.target.value as "upper" | "lower" | "title" | "sentence" })
+                set({ mode: e.target.value as NodeData<"case">["params"]["mode"] })
               }
             >
               <option value="upper">UPPER CASE</option>
               <option value="lower">lower case</option>
               <option value="title">Title Case</option>
               <option value="sentence">Sentence case</option>
+              <option value="camel">camelCase</option>
+              <option value="pascal">PascalCase</option>
+              <option value="snake">snake_case</option>
+              <option value="kebab">kebab-case</option>
+              <option value="constant">CONSTANT_CASE</option>
             </select>
           </label>
         )}
@@ -311,6 +445,9 @@ export function PropertiesPanel() {
                 value={(data.params as NodeData<"filter">["params"]).pattern}
                 onChange={(e) => set({ pattern: e.target.value })}
               />
+              {(data.params as NodeData<"filter">["params"]).useRegex && (
+                <RegexWarning pattern={(data.params as NodeData<"filter">["params"]).pattern} />
+              )}
             </label>
             <label className="properties__checkbox">
               <input
@@ -323,11 +460,241 @@ export function PropertiesPanel() {
             <label className="properties__checkbox">
               <input
                 type="checkbox"
+                checked={(data.params as NodeData<"filter">["params"]).caseSensitive ?? false}
+                onChange={(e) => set({ caseSensitive: e.target.checked })}
+              />
+              Case sensitive
+            </label>
+            <label className="properties__checkbox">
+              <input
+                type="checkbox"
                 checked={(data.params as NodeData<"filter">["params"]).invert}
                 onChange={(e) => set({ invert: e.target.checked })}
               />
               Invert (exclude matches)
             </label>
+            <label className="properties__checkbox">
+              <input
+                type="checkbox"
+                checked={(data.params as NodeData<"filter">["params"]).skipEmpty ?? false}
+                onChange={(e) => set({ skipEmpty: e.target.checked })}
+              />
+              Remove empty / blank rows
+            </label>
+          </>
+        )}
+
+        {kind === "sort" && (
+          <SortFields
+            params={data.params as NodeData<"sort">["params"]}
+            rowCount={(outputs.get(node.id) ?? []).length}
+            set={set}
+          />
+        )}
+
+        {kind === "unique" && (
+          <>
+            <div className="properties__segment" role="group" aria-label="Unique mode">
+              <button
+                type="button"
+                className={(data.params as NodeData<"unique">["params"]).mode === "unique" ? "is-active" : ""}
+                onClick={() => set({ mode: "unique" })}
+              >
+                Deduplicate
+              </button>
+              <button
+                type="button"
+                className={(data.params as NodeData<"unique">["params"]).mode === "duplicates" ? "is-active" : ""}
+                onClick={() => set({ mode: "duplicates" })}
+              >
+                Duplicates
+              </button>
+              <button
+                type="button"
+                className={(data.params as NodeData<"unique">["params"]).mode === "singles" ? "is-active" : ""}
+                onClick={() => set({ mode: "singles" })}
+              >
+                Singles only
+              </button>
+            </div>
+            <label className="properties__checkbox">
+              <input
+                type="checkbox"
+                checked={(data.params as NodeData<"unique">["params"]).caseSensitive}
+                onChange={(e) => set({ caseSensitive: e.target.checked })}
+              />
+              Case sensitive
+            </label>
+            <label className="properties__checkbox">
+              <input
+                type="checkbox"
+                checked={(data.params as NodeData<"unique">["params"]).showCount}
+                onChange={(e) => set({ showCount: e.target.checked })}
+              />
+              Prepend occurrence count
+            </label>
+            {(data.params as NodeData<"unique">["params"]).showCount && (
+              <label>
+                Count separator
+                <input
+                  value={(data.params as NodeData<"unique">["params"]).countPrefix}
+                  onChange={(e) => set({ countPrefix: e.target.value })}
+                />
+                <CharTokens value={(data.params as NodeData<"unique">["params"]).countPrefix} />
+              </label>
+            )}
+            <p className="properties__note">
+              Preserves the original appearance order of rows without sorting.
+            </p>
+          </>
+        )}
+
+        {kind === "number" && (
+          <>
+            <div className="properties__segment" role="group" aria-label="Number placement">
+              <button
+                type="button"
+                className={(data.params as NodeData<"number">["params"]).side === "start" ? "is-active" : ""}
+                onClick={() => set({ side: "start" })}
+              >
+                Prefix (start)
+              </button>
+              <button
+                type="button"
+                className={(data.params as NodeData<"number">["params"]).side === "end" ? "is-active" : ""}
+                onClick={() => set({ side: "end" })}
+              >
+                Suffix (end)
+              </button>
+            </div>
+            <label>
+              Start number
+              <input
+                type="number"
+                value={(data.params as NodeData<"number">["params"]).start}
+                onChange={(e) => set({ start: parseInt(e.target.value, 10) || 0 })}
+              />
+            </label>
+            <label>
+              Step increment
+              <input
+                type="number"
+                value={(data.params as NodeData<"number">["params"]).step}
+                onChange={(e) => set({ step: parseInt(e.target.value, 10) || 1 })}
+              />
+            </label>
+            <label>
+              Zero-pad width (0 for none)
+              <input
+                type="number"
+                min={0}
+                max={12}
+                value={(data.params as NodeData<"number">["params"]).padWidth}
+                onChange={(e) => set({ padWidth: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+              />
+            </label>
+            <label>
+              Separator
+              <input
+                value={(data.params as NodeData<"number">["params"]).separator}
+                onChange={(e) => set({ separator: e.target.value })}
+              />
+              <CharTokens value={(data.params as NodeData<"number">["params"]).separator} />
+            </label>
+            <label className="properties__checkbox">
+              <input
+                type="checkbox"
+                checked={(data.params as NodeData<"number">["params"]).skipEmpty}
+                onChange={(e) => set({ skipEmpty: e.target.checked })}
+              />
+              Skip empty rows
+            </label>
+          </>
+        )}
+
+        {kind === "extract" && (
+          <ExtractFields params={data.params as NodeData<"extract">["params"]} set={set} />
+        )}
+
+        {kind === "pad" && (
+          <>
+            <label>
+              Mode
+              <select
+                value={(data.params as NodeData<"pad">["params"]).mode}
+                onChange={(e) =>
+                  set({ mode: e.target.value as NodeData<"pad">["params"]["mode"] })
+                }
+              >
+                <option value="padEnd">Pad end (right)</option>
+                <option value="padStart">Pad start (left)</option>
+                <option value="padBoth">Pad both (center)</option>
+                <option value="truncate">Truncate to max width</option>
+              </select>
+            </label>
+            <label>
+              Target width (characters)
+              <input
+                type="number"
+                min={0}
+                value={(data.params as NodeData<"pad">["params"]).width}
+                onChange={(e) => set({ width: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+              />
+            </label>
+            {(data.params as NodeData<"pad">["params"]).mode === "truncate" ? (
+              <label>
+                Ellipsis suffix (optional)
+                <input
+                  value={(data.params as NodeData<"pad">["params"]).ellipsis}
+                  onChange={(e) => set({ ellipsis: e.target.value })}
+                  placeholder="e.g. … or ..."
+                />
+                <CharTokens value={(data.params as NodeData<"pad">["params"]).ellipsis} />
+              </label>
+            ) : (
+              <label>
+                Pad character
+                <input
+                  value={(data.params as NodeData<"pad">["params"]).padChar}
+                  maxLength={1}
+                  onChange={(e) => set({ padChar: e.target.value || " " })}
+                />
+                <CharTokens value={(data.params as NodeData<"pad">["params"]).padChar} />
+              </label>
+            )}
+          </>
+        )}
+
+        {kind === "template" && (
+          <>
+            <label>
+              Template pattern
+              <textarea
+                rows={3}
+                value={(data.params as NodeData<"template">["params"]).template}
+                onChange={(e) => set({ template: e.target.value })}
+                placeholder="e.g. ({i}) {col1}: {col2}"
+              />
+            </label>
+            <label>
+              Column delimiter (for &#123;col1&#125;, &#123;col2&#125;…)
+              <input
+                value={(data.params as NodeData<"template">["params"]).delimiter}
+                onChange={(e) => set({ delimiter: e.target.value })}
+              />
+              <CharTokens value={(data.params as NodeData<"template">["params"]).delimiter} recognizeEscapes />
+            </label>
+            <label className="properties__checkbox">
+              <input
+                type="checkbox"
+                checked={(data.params as NodeData<"template">["params"]).skipEmpty}
+                onChange={(e) => set({ skipEmpty: e.target.checked })}
+              />
+              Skip empty rows
+            </label>
+            <p className="properties__note">
+              Placeholders: <code>&#123;row&#125;</code> (full row), <code>&#123;i&#125;</code> (1-based index), <code>&#123;i0&#125;</code> (0-based index), and <code>&#123;col1&#125;</code>, <code>&#123;col2&#125;</code>… (columns split by delimiter).
+            </p>
           </>
         )}
 
@@ -535,6 +902,138 @@ function AppendFields({
   );
 }
 
+function SortFields({
+  params,
+  rowCount,
+  set,
+}: {
+  params: OperationParams["sort"];
+  rowCount: number;
+  set: (patch: Partial<OperationParams["sort"]>) => void;
+}) {
+  const scope = params.scope ?? "rows";
+  const direction = params.direction ?? "asc";
+  const mode = params.mode ?? "natural";
+  const usesDelimiter = scope === "delimited" || scope === "both";
+
+  return (
+    <>
+      <div className="properties__segment" role="group" aria-label="Sort scope">
+        <button
+          type="button"
+          className={scope === "rows" ? "is-active" : ""}
+          onClick={() => set({ scope: "rows" })}
+          title="Sort rows vertically"
+        >
+          Rows
+        </button>
+        <button
+          type="button"
+          className={scope === "delimited" ? "is-active" : ""}
+          onClick={() => set({ scope: "delimited" })}
+          title="Sort delimited items inside each row"
+        >
+          By delimiter
+        </button>
+        <button
+          type="button"
+          className={scope === "both" ? "is-active" : ""}
+          onClick={() => set({ scope: "both" })}
+          title="Sort delimited items inside each row, then sort all rows"
+        >
+          Both
+        </button>
+      </div>
+
+      {usesDelimiter && (
+        <>
+          <label>
+            In-row delimiter
+            <input
+              value={params.delimiter ?? ","}
+              onChange={(e) => set({ delimiter: e.target.value })}
+              placeholder="e.g. , or \\t"
+            />
+            <CharTokens value={params.delimiter ?? ","} recognizeEscapes />
+          </label>
+          <label className="properties__checkbox">
+            <input
+              type="checkbox"
+              checked={params.trimItems ?? true}
+              onChange={(e) => set({ trimItems: e.target.checked })}
+            />
+            Trim whitespace around delimited items
+          </label>
+        </>
+      )}
+
+      <div className="properties__segment" role="group" aria-label="Sort direction">
+        <button
+          type="button"
+          className={direction === "asc" ? "is-active" : ""}
+          onClick={() => set({ direction: "asc" })}
+        >
+          Ascending (A → Z)
+        </button>
+        <button
+          type="button"
+          className={direction === "desc" ? "is-active" : ""}
+          onClick={() => set({ direction: "desc" })}
+        >
+          Descending (Z → A)
+        </button>
+      </div>
+
+      <label>
+        Comparison mode
+        <select
+          value={mode}
+          onChange={(e) =>
+            set({ mode: e.target.value as OperationParams["sort"]["mode"] })
+          }
+        >
+          <option value="natural">Natural (item2 &lt; item10)</option>
+          <option value="alpha">Alphabetical (ASCII / lexicographical)</option>
+          <option value="numeric">Numeric (-5 &lt; 2 &lt; 10.5)</option>
+          <option value="length">Length (shortest to longest)</option>
+        </select>
+      </label>
+
+      <label className="properties__checkbox">
+        <input
+          type="checkbox"
+          checked={params.caseSensitive ?? false}
+          onChange={(e) => set({ caseSensitive: e.target.checked })}
+        />
+        Case sensitive
+      </label>
+
+      <label className="properties__checkbox">
+        <input
+          type="checkbox"
+          checked={params.unique ?? false}
+          onChange={(e) => set({ unique: e.target.checked })}
+        />
+        Remove duplicates (unique)
+      </label>
+
+      <p className="properties__note">
+        {scope === "rows" && "Sorts rows vertically by their full text."}
+        {scope === "delimited" &&
+          "Splits each row by the delimiter, sorts the values inside that row, and joins them back."}
+        {scope === "both" &&
+          "First sorts delimited values inside each row, then sorts all resulting rows vertically."}
+        {scope === "rows" && rowCount === 1 && (
+          <>
+            {" "}
+            <strong>Tip:</strong> Input has 1 row—switch to <strong>By delimiter</strong> to sort items inside a single line (e.g. <code>a,e,g,b</code> → <code>a,b,e,g</code>).
+          </>
+        )}
+      </p>
+    </>
+  );
+}
+
 function CharTokens({
   value,
   recognizeEscapes = false,
@@ -588,5 +1087,250 @@ function CharTokens({
         </span>
       ))}
     </div>
+  );
+}
+
+function SliceFields({
+  params,
+  set,
+}: {
+  params: OperationParams["slice"];
+  set: (patch: Partial<OperationParams["slice"]>) => void;
+}) {
+  const mode = params.mode ?? "skip";
+  return (
+    <>
+      <div className="properties__segment" role="group" aria-label="Slice mode">
+        <button
+          type="button"
+          className={mode === "skip" ? "is-active" : ""}
+          onClick={() => set({ mode: "skip" })}
+        >
+          Skip ends
+        </button>
+        <button
+          type="button"
+          className={mode === "range" ? "is-active" : ""}
+          onClick={() => set({ mode: "range" })}
+        >
+          Line range
+        </button>
+        <button
+          type="button"
+          className={mode === "step" ? "is-active" : ""}
+          onClick={() => set({ mode: "step" })}
+        >
+          Every Nth
+        </button>
+      </div>
+
+      {mode === "skip" && (
+        <>
+          <label>
+            Skip first N rows (e.g. header)
+            <input
+              type="number"
+              min={0}
+              value={params.skipStart ?? 1}
+              onChange={(e) => set({ skipStart: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+            />
+          </label>
+          <label>
+            Skip last N rows (e.g. footer)
+            <input
+              type="number"
+              min={0}
+              value={params.skipEnd ?? 0}
+              onChange={(e) => set({ skipEnd: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+            />
+          </label>
+        </>
+      )}
+
+      {mode === "range" && (
+        <>
+          <label>
+            Start line (1-based, inclusive)
+            <input
+              type="number"
+              min={1}
+              value={params.startLine ?? 1}
+              onChange={(e) => set({ startLine: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+            />
+          </label>
+          <label>
+            End line (inclusive, 0 = until end)
+            <input
+              type="number"
+              min={0}
+              value={params.endLine ?? 10}
+              onChange={(e) => set({ endLine: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+            />
+          </label>
+        </>
+      )}
+
+      {mode === "step" && (
+        <>
+          <label>
+            Take every Nth row
+            <input
+              type="number"
+              min={1}
+              value={params.step ?? 2}
+              onChange={(e) => set({ step: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+            />
+          </label>
+          <label>
+            Starting at line (1-based)
+            <input
+              type="number"
+              min={1}
+              value={params.offset ?? 1}
+              onChange={(e) => set({ offset: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+            />
+          </label>
+        </>
+      )}
+    </>
+  );
+}
+
+function ExtractFields({
+  params,
+  set,
+}: {
+  params: OperationParams["extract"];
+  set: (patch: Partial<OperationParams["extract"]>) => void;
+}) {
+  const mode = params.mode ?? "column";
+  return (
+    <>
+      <div className="properties__segment" role="group" aria-label="Extract mode">
+        <button
+          type="button"
+          className={mode === "column" ? "is-active" : ""}
+          onClick={() => set({ mode: "column" })}
+        >
+          Column
+        </button>
+        <button
+          type="button"
+          className={mode === "between" ? "is-active" : ""}
+          onClick={() => set({ mode: "between" })}
+        >
+          Between
+        </button>
+        <button
+          type="button"
+          className={mode === "regex" ? "is-active" : ""}
+          onClick={() => set({ mode: "regex" })}
+        >
+          Regex
+        </button>
+      </div>
+
+      {mode === "column" && (
+        <>
+          <label>
+            Delimiter
+            <input
+              value={params.delimiter ?? ","}
+              onChange={(e) => set({ delimiter: e.target.value })}
+            />
+            <CharTokens value={params.delimiter ?? ","} recognizeEscapes />
+          </label>
+          <label>
+            Column number (1 = first, -1 = last)
+            <input
+              type="number"
+              value={params.column ?? 1}
+              onChange={(e) => set({ column: parseInt(e.target.value, 10) || 1 })}
+            />
+          </label>
+          <label className="properties__checkbox">
+            <input
+              type="checkbox"
+              checked={params.trimValues ?? true}
+              onChange={(e) => set({ trimValues: e.target.checked })}
+            />
+            Trim extracted column value
+          </label>
+        </>
+      )}
+
+      {mode === "between" && (
+        <>
+          <label>
+            Start delimiter
+            <input
+              value={params.startDelim ?? "["}
+              onChange={(e) => set({ startDelim: e.target.value })}
+            />
+            <CharTokens value={params.startDelim ?? "["} recognizeEscapes />
+          </label>
+          <label>
+            End delimiter
+            <input
+              value={params.endDelim ?? "]"}
+              onChange={(e) => set({ endDelim: e.target.value })}
+            />
+            <CharTokens value={params.endDelim ?? "]"} recognizeEscapes />
+          </label>
+        </>
+      )}
+
+      {mode === "regex" && (
+        <>
+          <label>
+            Regular expression
+            <input
+              value={params.pattern ?? ""}
+              onChange={(e) => set({ pattern: e.target.value })}
+              placeholder="e.g. id=(\d+)"
+            />
+            <RegexWarning pattern={params.pattern ?? ""} />
+          </label>
+          <label>
+            Capture group (0 = full match, 1 = first group)
+            <input
+              type="number"
+              min={0}
+              value={params.group ?? 1}
+              onChange={(e) => set({ group: Math.max(0, parseInt(e.target.value, 10) || 0) })}
+            />
+          </label>
+        </>
+      )}
+
+      <label className="properties__checkbox">
+        <input
+          type="checkbox"
+          checked={params.dropUnmatched ?? false}
+          onChange={(e) => set({ dropUnmatched: e.target.checked })}
+        />
+        Drop rows without a match
+      </label>
+
+      {!(params.dropUnmatched ?? false) && (
+        <label>
+          Fallback when not found
+          <input
+            value={params.missingFallback ?? ""}
+            onChange={(e) => set({ missingFallback: e.target.value })}
+            placeholder="(leave empty for blank)"
+          />
+        </label>
+      )}
+    </>
+  );
+}
+
+function RegexWarning({ pattern }: { pattern: string }) {
+  if (!pattern || isValidRegex(pattern)) return null;
+  return (
+    <span className="properties__regex-warning" role="alert">
+      Invalid regular expression — falling back to literal match
+    </span>
   );
 }

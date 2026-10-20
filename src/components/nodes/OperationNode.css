@@ -65,7 +65,9 @@
   background: #3a5338;
 }
 .op-node--merge .op-node__header,
-.op-node--unmerge .op-node__header {
+.op-node--unmerge .op-node__header,
+.op-node--compare .op-node__header,
+.op-node--partition .op-node__header {
   background: #384f53;
 }
 .op-node--append .op-node__header {
@@ -115,6 +117,8 @@
 
 .op-node--merge .op-node__summary,
 .op-node--unmerge .op-node__summary,
+.op-node--compare .op-node__summary,
+.op-node--partition .op-node__summary,
 .op-node--append .op-node__summary {
   padding: 4px 0 0 0;
   border-top: 1px solid #35353c;
