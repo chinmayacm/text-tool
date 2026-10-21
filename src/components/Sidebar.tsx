@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { OPERATION_DESCRIPTIONS, OPERATION_LABELS, type OperationKind } from "../types";
 import { GRAPH_TEMPLATES } from "../templates";
 import { useGraphStore } from "../store/useGraphStore";
@@ -6,6 +6,8 @@ import {
   createProjectArchive,
   createProjectSnapshot,
   readProjectArchive,
+  saveBlobWithNativePicker,
+  supportsSaveFilePicker,
 } from "../store/projectPersistence";
 import type { ProjectSaveStatus } from "../store/useProjectPersistence";
 import { setPaletteDragKind } from "./nodeDrag";
@@ -25,7 +27,21 @@ const NODE_GROUPS: Array<{ label: string; group: string; kinds: OperationKind[] 
   {
     label: "Transform & Filter",
     group: "transform",
-    kinds: ["trim", "enclose", "replace", "case", "filter", "sort", "unique", "number", "extract", "pad", "template"],
+    kinds: [
+      "trim",
+      "enclose",
+      "replace",
+      "case",
+      "filter",
+      "sort",
+      "unique",
+      "number",
+      "extract",
+      "pad",
+      "template",
+      "encode",
+      "stats",
+    ],
   },
 ];
 
@@ -87,17 +103,55 @@ export function Sidebar({
     e.dataTransfer.effectAllowed = "move";
   }
 
-  function openExportDialog() {
+  const openExportDialog = useCallback(async () => {
     setProjectError("");
+    const baseName = exportFilename.trim() || `texttool-project-${new Date().toISOString().slice(0, 10)}`;
+    const suggestedName = baseName.toLowerCase().endsWith(".texttool") ? baseName : `${baseName}.texttool`;
+
+    if (supportsSaveFilePicker()) {
+      try {
+        const result = await saveBlobWithNativePicker(
+          suggestedName,
+          async () => {
+            const snapshot = createProjectSnapshot(useGraphStore.getState());
+            return createProjectArchive(snapshot);
+          },
+          {
+            description: "TextTool Project (.texttool)",
+            mime: "application/zip",
+            extensions: [".texttool"],
+          }
+        );
+        if (result.saved && result.name) {
+          const pickedBase = result.name.replace(/\.texttool$/i, "").trim();
+          if (pickedBase) setExportFilename(pickedBase);
+        }
+      } catch {
+        setProjectError("Could not export the project.");
+      }
+      return;
+    }
+
     if (!exportFilename.trim()) {
-      setExportFilename(`texttool-project-${new Date().toISOString().slice(0, 10)}`);
+      setExportFilename(baseName);
     }
     exportDialogRef.current?.showModal();
     window.setTimeout(() => {
       exportInputRef.current?.focus();
       exportInputRef.current?.select();
     }, 0);
-  }
+  }, [exportFilename]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void openExportDialog();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [openExportDialog]);
 
   async function exportProject(rawName: string) {
     setProjectError("");
@@ -151,7 +205,12 @@ export function Sidebar({
               {saveStatus === "saved" && "Autosaved on this device"}
               {saveStatus === "error" && "Local save unavailable"}
             </p>
-            <button type="button" className="sidebar__project-button" onClick={openExportDialog}>
+            <button
+              type="button"
+              className="sidebar__project-button"
+              onClick={() => void openExportDialog()}
+              title="Export project archive (Ctrl+S)"
+            >
               Export project
             </button>
             <button type="button" className="sidebar__project-button" onClick={() => projectFileRef.current?.click()}>
@@ -186,19 +245,19 @@ export function Sidebar({
         )}
       </section>
 
-      <section className="sidebar__section" aria-label="Templates">
+      <section className="sidebar__section" aria-label="Examples">
         <button
           type="button"
           className="sidebar__section-toggle"
           aria-expanded={templatesOpen}
           onClick={() => setTemplatesOpen((open) => !open)}
         >
-          <span>Templates</span>
+          <span>Examples</span>
           <span className="sidebar__chevron" aria-hidden="true">{templatesOpen ? "▾" : "▸"}</span>
         </button>
         {templatesOpen && (
           <div className="sidebar__section-body">
-            <p className="sidebar__hint">Load a starter graph</p>
+            <p className="sidebar__hint">Load a sample pipeline</p>
             {GRAPH_TEMPLATES.map((template) => (
               <button
                 key={template.id}

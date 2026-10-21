@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   Controls,
@@ -15,7 +15,33 @@ import "@xyflow/react/dist/style.css";
 import { useGraphStore, type FlowNode } from "../store/useGraphStore";
 import { OperationNode } from "./nodes/OperationNode";
 import { getPaletteDragKind, setPaletteDragKind } from "./nodeDrag";
-import type { OperationKind } from "../types";
+import { OPERATION_DESCRIPTIONS, OPERATION_LABELS, type OperationKind } from "../types";
+
+const PALETTE_KINDS: OperationKind[] = [
+  "input",
+  "split",
+  "join",
+  "merge",
+  "unmerge",
+  "compare",
+  "partition",
+  "slice",
+  "append",
+  "trim",
+  "enclose",
+  "replace",
+  "case",
+  "filter",
+  "sort",
+  "unique",
+  "number",
+  "extract",
+  "pad",
+  "template",
+  "encode",
+  "stats",
+  "output",
+];
 
 const nodeTypes: Record<OperationKind, typeof OperationNode> = {
   input: OperationNode,
@@ -38,21 +64,33 @@ const nodeTypes: Record<OperationKind, typeof OperationNode> = {
   extract: OperationNode,
   pad: OperationNode,
   template: OperationNode,
+  encode: OperationNode,
+  stats: OperationNode,
   output: OperationNode,
 };
 
 export function Canvas() {
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const { screenToFlowPosition, setViewport: applyViewport } = useReactFlow();
+  const quickSearchRef = useRef<HTMLInputElement>(null);
+  const { screenToFlowPosition, setViewport: applyViewport, fitView } = useReactFlow();
+
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [quickAddQuery, setQuickAddQuery] = useState("");
+  const [quickAddIndex, setQuickAddIndex] = useState(0);
+  const [quickAddFlowPos, setQuickAddFlowPos] = useState<{ x: number; y: number } | undefined>(undefined);
 
   const nodes = useGraphStore((s) => s.nodes);
   const edges = useGraphStore((s) => s.edges);
+  const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
   const viewport = useGraphStore((s) => s.viewport);
   const onNodesChange = useGraphStore((s) => s.onNodesChange);
   const onEdgesChange = useGraphStore((s) => s.onEdgesChange);
   const onDelete = useGraphStore((s) => s.onDelete);
   const onConnect = useGraphStore((s) => s.onConnect);
   const addNode = useGraphStore((s) => s.addNode);
+  const quickAddNode = useGraphStore((s) => s.quickAddNode);
+  const tidyGraph = useGraphStore((s) => s.tidyGraph);
+  const toggleNodeBypass = useGraphStore((s) => s.toggleNodeBypass);
   const spliceNodeIntoEdge = useGraphStore((s) => s.spliceNodeIntoEdge);
   const removeEdge = useGraphStore((s) => s.removeEdge);
   const setSelectedNode = useGraphStore((s) => s.setSelectedNode);
@@ -155,20 +193,75 @@ export function Canvas() {
     [setSelectedNode]
   );
 
+  const filteredKinds = useMemo(() => {
+    const q = quickAddQuery.trim().toLowerCase();
+    if (!q) return PALETTE_KINDS;
+    return PALETTE_KINDS.filter(
+      (kind) =>
+        OPERATION_LABELS[kind].toLowerCase().includes(q) ||
+        kind.toLowerCase().includes(q) ||
+        OPERATION_DESCRIPTIONS[kind].toLowerCase().includes(q)
+    );
+  }, [quickAddQuery]);
+
+  const openQuickAdd = useCallback((flowPos?: { x: number; y: number }) => {
+    setQuickAddQuery("");
+    setQuickAddIndex(0);
+    setQuickAddFlowPos(flowPos);
+    setQuickAddOpen(true);
+    window.setTimeout(() => {
+      quickSearchRef.current?.focus();
+    }, 0);
+  }, []);
+
+  const handleSelectQuickAdd = useCallback(
+    (kind: OperationKind) => {
+      quickAddNode(kind, quickAddFlowPos);
+      setQuickAddOpen(false);
+    },
+    [quickAddNode, quickAddFlowPos]
+  );
+
+  const handleTidyGraph = useCallback(() => {
+    tidyGraph();
+    window.setTimeout(() => {
+      void fitView({ padding: 0.22, duration: 220 });
+    }, 20);
+  }, [tidyGraph, fitView]);
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (isTypingTarget(event.target) || !(event.ctrlKey || event.metaKey) || event.altKey) return;
+      if (isTypingTarget(event.target)) return;
       const key = event.key.toLowerCase();
-      if (key === "c") {
-        if (hasTextSelection()) return;
-        if (copySelected()) event.preventDefault();
-      } else if (key === "v") {
-        if (pasteSelected()) event.preventDefault();
+      if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+        if (key === "k") {
+          event.preventDefault();
+          openQuickAdd();
+          return;
+        }
+        if (key === "c") {
+          if (hasTextSelection()) return;
+          if (copySelected()) event.preventDefault();
+        } else if (key === "v") {
+          if (pasteSelected()) event.preventDefault();
+        }
+        return;
+      }
+      if (!event.ctrlKey && !event.metaKey && !event.altKey) {
+        if (event.key === "/") {
+          event.preventDefault();
+          openQuickAdd();
+        } else if (key === "b" || key === "m") {
+          if (selectedNodeId) {
+            event.preventDefault();
+            toggleNodeBypass(selectedNodeId);
+          }
+        }
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [copySelected, pasteSelected]);
+  }, [copySelected, pasteSelected, openQuickAdd, selectedNodeId, toggleNodeBypass]);
 
   const onNodeDragStart: OnNodeDrag<FlowNode> = useCallback((event) => {
     if (dwellTimer.current !== null) window.clearTimeout(dwellTimer.current);
@@ -274,6 +367,8 @@ export function Canvas() {
     [removeEdge]
   );
 
+  const selectedNode = nodes.find((n) => n.id === selectedNodeId);
+
   return (
     <div
       className="canvas"
@@ -284,7 +379,31 @@ export function Canvas() {
         if (e.relatedTarget instanceof Node && wrapperRef.current?.contains(e.relatedTarget)) return;
         clearPaletteMagnet();
       }}
+      onDoubleClick={(e) => {
+        const target = e.target as HTMLElement | null;
+        if (target && target.classList.contains("react-flow__pane")) {
+          openQuickAdd(screenToFlowPosition({ x: e.clientX, y: e.clientY }));
+        }
+      }}
     >
+      <div className="canvas__toolbar" role="toolbar" aria-label="Canvas actions">
+        <button
+          type="button"
+          className="canvas__tool-btn"
+          onClick={() => openQuickAdd()}
+          title="Quick-add node and auto-connect (/ or Ctrl+K or double-click canvas)"
+        >
+          ＋ Quick Add <kbd>/</kbd>
+        </button>
+        <button
+          type="button"
+          className="canvas__tool-btn"
+          onClick={handleTidyGraph}
+          title="Auto-arrange nodes into clean left-to-right topological columns"
+        >
+          ✦ Tidy Graph
+        </button>
+      </div>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -304,6 +423,7 @@ export function Canvas() {
         nodeTypes={nodeTypes}
         defaultViewport={viewport ?? undefined}
         fitView={!viewport}
+        zoomOnDoubleClick={false}
         colorMode="dark"
         connectionRadius={45}
         deleteKeyCode={["Backspace", "Delete"]}
@@ -318,6 +438,93 @@ export function Canvas() {
         <Controls />
         <MiniMap />
       </ReactFlow>
+      {quickAddOpen && (
+        <div
+          className="quick-add-backdrop"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setQuickAddOpen(false);
+          }}
+        >
+          <div className="quick-add-modal" role="dialog" aria-label="Quick add node">
+            <div className="quick-add-header">
+              <input
+                ref={quickSearchRef}
+                type="text"
+                className="quick-add-input"
+                value={quickAddQuery}
+                onChange={(e) => {
+                  setQuickAddQuery(e.target.value);
+                  setQuickAddIndex(0);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setQuickAddOpen(false);
+                  } else if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setQuickAddIndex((i) =>
+                      filteredKinds.length > 0 ? (i + 1) % filteredKinds.length : 0
+                    );
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setQuickAddIndex((i) =>
+                      filteredKinds.length > 0
+                        ? (i - 1 + filteredKinds.length) % filteredKinds.length
+                        : 0
+                    );
+                  } else if (e.key === "Enter" && filteredKinds.length > 0) {
+                    e.preventDefault();
+                    const picked = filteredKinds[Math.min(quickAddIndex, filteredKinds.length - 1)];
+                    if (picked) handleSelectQuickAdd(picked);
+                  }
+                }}
+                placeholder="Type a node name to add (e.g. filter, sort, stats)…"
+                aria-label="Search nodes to add"
+              />
+              <span className="quick-add-kbd">Esc</span>
+            </div>
+            <div className="quick-add-list" role="listbox">
+              {filteredKinds.length === 0 ? (
+                <div className="quick-add-empty">No matching nodes</div>
+              ) : (
+                filteredKinds.map((kind, idx) => {
+                  const isActive = idx === Math.min(quickAddIndex, filteredKinds.length - 1);
+                  return (
+                    <button
+                      key={kind}
+                      type="button"
+                      role="option"
+                      aria-selected={isActive}
+                      className={`quick-add-item ${isActive ? "is-active" : ""}`}
+                      onMouseEnter={() => setQuickAddIndex(idx)}
+                      onClick={() => handleSelectQuickAdd(kind)}
+                    >
+                      <span className="quick-add-item__name">{OPERATION_LABELS[kind]}</span>
+                      <span className="quick-add-item__desc">{OPERATION_DESCRIPTIONS[kind]}</span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+            <div className="quick-add-footer">
+              {selectedNode ? (
+                selectedNode.data.kind === "output" ? (
+                  <span>
+                    Will insert before <strong>{selectedNode.data.label}</strong>
+                  </span>
+                ) : (
+                  <span>
+                    Will auto-connect after <strong>{selectedNode.data.label}</strong>
+                  </span>
+                )
+              ) : (
+                <span>Will place on canvas</span>
+              )}
+              <span>↑↓ navigate · Enter add</span>
+            </div>
+          </div>
+        </div>
+      )}
       <svg className="magnet-overlay" aria-hidden="true">
         <line ref={lineRef} />
       </svg>

@@ -149,6 +149,90 @@ export function bridgeDeletedNodes(
   return nextEdges;
 }
 
+export function layoutGraphTopologically(nodes: FlowNode[], edges: Edge[]): FlowNode[] {
+  if (nodes.length === 0) return nodes;
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  const incoming = new Map<string, Edge[]>();
+  for (const n of nodes) incoming.set(n.id, []);
+  for (const e of edges) {
+    if (nodeById.has(e.source) && nodeById.has(e.target)) {
+      incoming.get(e.target)!.push(e);
+    }
+  }
+
+  const colById = new Map<string, number>();
+  const visiting = new Set<string>();
+
+  function getCol(id: string): number {
+    if (colById.has(id)) return colById.get(id)!;
+    if (visiting.has(id)) return 0;
+    visiting.add(id);
+    const inc = incoming.get(id) ?? [];
+    let col = 0;
+    for (const e of inc) {
+      col = Math.max(col, getCol(e.source) + 1);
+    }
+    visiting.delete(id);
+    colById.set(id, col);
+    return col;
+  }
+
+  for (const n of nodes) getCol(n.id);
+
+  const columns = new Map<number, FlowNode[]>();
+  for (const n of nodes) {
+    const c = colById.get(n.id) ?? 0;
+    const list = columns.get(c) ?? [];
+    list.push(n);
+    columns.set(c, list);
+  }
+
+  const sortedCols = [...columns.keys()].sort((a, b) => a - b);
+  const assignedY = new Map<string, number>();
+  const COL_START_X = 80;
+  const COL_GAP_X = 250;
+  const ROW_GAP_Y = 130;
+  const CENTER_Y = 220;
+
+  const newPosById = new Map<string, { x: number; y: number }>();
+
+  for (const c of sortedCols) {
+    const colNodes = columns.get(c)!;
+    colNodes.sort((a, b) => {
+      const incA = incoming.get(a.id) ?? [];
+      const incB = incoming.get(b.id) ?? [];
+      const barycenter = (inc: Edge[], fallbackY: number): number => {
+        if (inc.length === 0) return fallbackY;
+        let sum = 0;
+        for (const e of inc) {
+          const srcY = assignedY.get(e.source) ?? nodeById.get(e.source)?.position.y ?? CENTER_Y;
+          const srcOffset = e.sourceHandle === "b" ? 30 : e.sourceHandle === "a" ? -30 : 0;
+          const tgtOffset = e.targetHandle === "b" ? 20 : e.targetHandle === "a" ? -20 : 0;
+          sum += srcY + srcOffset + tgtOffset;
+        }
+        return sum / inc.length;
+      };
+      const scoreA = barycenter(incA, a.position.y);
+      const scoreB = barycenter(incB, b.position.y);
+      if (Math.abs(scoreA - scoreB) > 1) return scoreA - scoreB;
+      return a.position.y - b.position.y;
+    });
+
+    const startY = CENTER_Y - ((colNodes.length - 1) * ROW_GAP_Y) / 2;
+    colNodes.forEach((node, idx) => {
+      const x = COL_START_X + c * COL_GAP_X;
+      const y = Math.round(startY + idx * ROW_GAP_Y);
+      assignedY.set(node.id, y);
+      newPosById.set(node.id, { x, y });
+    });
+  }
+
+  return nodes.map((node) => {
+    const nextPos = newPosById.get(node.id);
+    return nextPos ? { ...node, position: nextPos } : node;
+  });
+}
+
 interface GraphState {
   nodes: FlowNode[];
   edges: Edge[];
@@ -175,6 +259,10 @@ interface GraphState {
   spliceNodeIntoEdge: (nodeId: string, edgeId: string) => void;
   updateNodeParams: (id: string, params: Record<string, unknown>) => void;
   renameNode: (id: string, label: string) => void;
+  setNodeNote: (id: string, note: string) => void;
+  toggleNodeBypass: (id: string) => void;
+  tidyGraph: () => void;
+  quickAddNode: (kind: OperationKind, position?: { x: number; y: number }) => string;
   removeEdge: (id: string) => void;
   setSelectedNode: (id: string | null) => void;
   copySelected: () => boolean;
@@ -367,6 +455,127 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     set({
       nodes: get().nodes.map((node) => (node.id === id ? { ...node, data: { ...node.data, label } } : node)),
     });
+  },
+  setNodeNote: (id, note) => {
+    set({
+      nodes: get().nodes.map((node) => (node.id === id ? { ...node, data: { ...node.data, note } } : node)),
+    });
+  },
+  toggleNodeBypass: (id) => {
+    set({
+      nodes: get().nodes.map((node) =>
+        node.id === id && node.data.kind !== "input" && node.data.kind !== "output"
+          ? { ...node, data: { ...node.data, bypassed: !node.data.bypassed } }
+          : node
+      ),
+    });
+    get().recompute();
+  },
+  tidyGraph: () => {
+    set({
+      nodes: layoutGraphTopologically(get().nodes, get().edges),
+    });
+  },
+  quickAddNode: (kind, fallbackPosition) => {
+    const state = get();
+    const selected = state.selectedNodeId
+      ? state.nodes.find((n) => n.id === state.selectedNodeId)
+      : undefined;
+
+    function avoidOverlap(pos: { x: number; y: number }, existing: FlowNode[]): { x: number; y: number } {
+      let candidate = { ...pos };
+      while (
+        existing.some(
+          (n) => Math.abs(n.position.x - candidate.x) < 60 && Math.abs(n.position.y - candidate.y) < 55
+        )
+      ) {
+        candidate = { x: candidate.x, y: candidate.y + 110 };
+      }
+      return candidate;
+    }
+
+    if (selected && selected.data.kind !== "output" && kind !== "input") {
+      const outgoing = state.edges.filter((e) => e.source === selected.id);
+      const singleOutEdge = outgoing.length === 1 && kind !== "output" ? outgoing[0] : undefined;
+      const basePos = avoidOverlap(
+        { x: selected.position.x + 250, y: selected.position.y },
+        state.nodes
+      );
+
+      if (singleOutEdge) {
+        const targetNode = state.nodes.find((n) => n.id === singleOutEdge.target);
+        if (targetNode && targetNode.position.x < basePos.x + 180) {
+          const shiftX = basePos.x + 250 - targetNode.position.x;
+          set({
+            nodes: state.nodes.map((n) =>
+              n.position.x >= targetNode.position.x - 10
+                ? { ...n, position: { x: n.position.x + shiftX, y: n.position.y } }
+                : n
+            ),
+          });
+        }
+        const newId = get().addNode(kind, basePos, singleOutEdge.id);
+        set({
+          nodes: get().nodes.map((n) => ({ ...n, selected: n.id === newId })),
+          selectedNodeId: newId,
+        });
+        return newId;
+      }
+
+      const newId = get().addNode(kind, basePos);
+      const sourceHandle = normalizeOutputSlot(selected.data.kind, null);
+      const targetHandle = normalizeInputSlot(kind, null);
+      const filtered = replaceTargetInputEdge(get().edges, get().nodes, newId, targetHandle);
+      set({
+        edges: addEdge(
+          { source: selected.id, target: newId, sourceHandle, targetHandle },
+          filtered
+        ),
+        nodes: get().nodes.map((n) => ({ ...n, selected: n.id === newId })),
+        selectedNodeId: newId,
+      });
+      get().recompute();
+      return newId;
+    }
+
+    if (selected && selected.data.kind === "output" && kind !== "input" && kind !== "output") {
+      const incoming = state.edges.filter((e) => e.target === selected.id);
+      if (incoming.length === 1) {
+        const inEdge = incoming[0];
+        const sourceNode = state.nodes.find((n) => n.id === inEdge.source);
+        const basePos = avoidOverlap(
+          {
+            x: sourceNode ? sourceNode.position.x + 250 : selected.position.x - 250,
+            y: selected.position.y,
+          },
+          state.nodes
+        );
+        if (selected.position.x < basePos.x + 180) {
+          set({
+            nodes: state.nodes.map((n) =>
+              n.id === selected.id ? { ...n, position: { x: basePos.x + 250, y: n.position.y } } : n
+            ),
+          });
+        }
+        const newId = get().addNode(kind, basePos, inEdge.id);
+        set({
+          nodes: get().nodes.map((n) => ({ ...n, selected: n.id === newId })),
+          selectedNodeId: newId,
+        });
+        return newId;
+      }
+    }
+
+    const defaultPos = avoidOverlap(
+      fallbackPosition ?? { x: 220, y: 180 },
+      state.nodes
+    );
+    const newId = get().addNode(kind, defaultPos);
+    set({
+      nodes: get().nodes.map((n) => ({ ...n, selected: n.id === newId })),
+      selectedNodeId: newId,
+    });
+    return newId;
   },
   removeEdge: (id) => {
     set({ edges: get().edges.filter((edge) => edge.id !== id) });

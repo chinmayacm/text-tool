@@ -1,8 +1,20 @@
-import { useRef, type RefObject } from "react";
+import { useRef, useState, type RefObject } from "react";
 import { isValidRegex } from "../engine/operations";
 import { formatBytes } from "../engine/textSource";
+import { saveTextFile } from "../store/projectPersistence";
 import { useGraphStore } from "../store/useGraphStore";
-import { OPERATION_DESCRIPTIONS, OPERATION_LABELS, type NodeData, type OperationParams } from "../types";
+import {
+  ALL_STAT_METRICS,
+  NUMERIC_STAT_METRICS,
+  OPERATION_DESCRIPTIONS,
+  OPERATION_LABELS,
+  resolveStatMetrics,
+  STAT_METRIC_LABELS,
+  TEXT_STAT_METRICS,
+  type NodeData,
+  type OperationParams,
+  type StatMetricKey,
+} from "../types";
 import "./PropertiesPanel.css";
 
 export function PropertiesPanel() {
@@ -14,6 +26,8 @@ export function PropertiesPanel() {
   const lastProcessTime = useGraphStore((s) => s.lastProcessTime);
   const updateNodeParams = useGraphStore((s) => s.updateNodeParams);
   const renameNode = useGraphStore((s) => s.renameNode);
+  const setNodeNote = useGraphStore((s) => s.setNodeNote);
+  const toggleNodeBypass = useGraphStore((s) => s.toggleNodeBypass);
   const processFullGraph = useGraphStore((s) => s.processFullGraph);
   const attachInputFile = useGraphStore((s) => s.attachInputFile);
   const clearInputFile = useGraphStore((s) => s.clearInputFile);
@@ -49,13 +63,7 @@ export function PropertiesPanel() {
   function handleDownloadOutput() {
     const rows = fullOutputs.get(node!.id) || outputs.get(node!.id) || [];
     const filename = (data.params as { filename?: string }).filename || "output.txt";
-    const blob = new Blob([rows.join("\n")], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    void saveTextFile(rows.join("\n"), filename);
   }
 
   return (
@@ -63,6 +71,20 @@ export function PropertiesPanel() {
       <div className="properties__header">
         <h2>Properties</h2>
         <div className="properties__about">
+          {kind !== "input" && kind !== "output" && (
+            <button
+              type="button"
+              className={`properties__bypass-btn ${data.bypassed ? "is-bypassed" : ""}`}
+              onClick={() => toggleNodeBypass(node.id)}
+              title={
+                data.bypassed
+                  ? "Node is bypassed (muted) — click to re-enable"
+                  : "Bypass node so input passes straight through"
+              }
+            >
+              {data.bypassed ? "⊘ Bypassed" : "⚡ Bypass"}
+            </button>
+          )}
           <span className="properties__kind-badge">{OPERATION_LABELS[kind]}</span>
           <span
             className="properties__info"
@@ -76,10 +98,25 @@ export function PropertiesPanel() {
       {selectedCount > 1 && (
         <p className="properties__hint">{selectedCount} nodes selected. Editing the last one. Ctrl+C / Ctrl+V copies the selection.</p>
       )}
-      <label className="properties__name">
-        Name
-        <input value={data.label} onChange={(e) => renameNode(node.id, e.target.value)} />
-      </label>
+      <div className="properties__identity">
+        <label className="properties__name">
+          Name
+          <input value={data.label} onChange={(e) => renameNode(node.id, e.target.value)} />
+        </label>
+        <label className="properties__note-field">
+          Subtitle / Note
+          <input
+            value={data.note ?? ""}
+            onChange={(e) => setNodeNote(node.id, e.target.value)}
+            placeholder="Optional note shown on canvas…"
+          />
+        </label>
+      </div>
+      {data.bypassed && kind !== "input" && kind !== "output" && (
+        <div className="properties__bypass-banner" role="status">
+          This node is <strong>bypassed</strong>. Incoming data passes straight through untouched.
+        </div>
+      )}
       <div className="properties__body">
         {kind === "input" && (
           <InputFields
@@ -96,7 +133,12 @@ export function PropertiesPanel() {
         {kind === "split" && (
           <>
             <label>
-              Delimiter
+              <span className="properties__label-row">
+                <span>Delimiter</span>
+                <RegexPresets
+                  onSelect={(pattern) => set({ delimiter: pattern, useRegex: true })}
+                />
+              </span>
               <input
                 value={(data.params as NodeData<"split">["params"]).delimiter}
                 onChange={(e) => set({ delimiter: e.target.value })}
@@ -117,6 +159,16 @@ export function PropertiesPanel() {
               />
               Treat delimiter as regex
             </label>
+            {!(data.params as NodeData<"split">["params"]).useRegex && (
+              <label className="properties__checkbox">
+                <input
+                  type="checkbox"
+                  checked={(data.params as NodeData<"split">["params"]).quoteAware ?? false}
+                  onChange={(e) => set({ quoteAware: e.target.checked })}
+                />
+                Quote-aware CSV mode (ignore delimiters inside quotes)
+              </label>
+            )}
             <p className="properties__note">Each input row is split into multiple output rows.</p>
           </>
         )}
@@ -281,7 +333,12 @@ export function PropertiesPanel() {
         {kind === "partition" && (
           <>
             <label>
-              Pattern
+              <span className="properties__label-row">
+                <span>Pattern</span>
+                <RegexPresets
+                  onSelect={(pattern) => set({ pattern, useRegex: true })}
+                />
+              </span>
               <input
                 value={(data.params as NodeData<"partition">["params"]).pattern}
                 onChange={(e) => set({ pattern: e.target.value })}
@@ -367,7 +424,12 @@ export function PropertiesPanel() {
         {kind === "replace" && (
           <>
             <label>
-              Find
+              <span className="properties__label-row">
+                <span>Find</span>
+                <RegexPresets
+                  onSelect={(pattern) => set({ find: pattern, useRegex: true })}
+                />
+              </span>
               <input
                 value={(data.params as NodeData<"replace">["params"]).find}
                 onChange={(e) => set({ find: e.target.value })}
@@ -440,7 +502,12 @@ export function PropertiesPanel() {
         {kind === "filter" && (
           <>
             <label>
-              Pattern
+              <span className="properties__label-row">
+                <span>Pattern</span>
+                <RegexPresets
+                  onSelect={(pattern) => set({ pattern, useRegex: true })}
+                />
+              </span>
               <input
                 value={(data.params as NodeData<"filter">["params"]).pattern}
                 onChange={(e) => set({ pattern: e.target.value })}
@@ -690,6 +757,14 @@ export function PropertiesPanel() {
             <label className="properties__checkbox">
               <input
                 type="checkbox"
+                checked={(data.params as NodeData<"template">["params"]).quoteAware ?? true}
+                onChange={(e) => set({ quoteAware: e.target.checked })}
+              />
+              Quote-aware CSV mode (ignore delimiters inside quotes)
+            </label>
+            <label className="properties__checkbox">
+              <input
+                type="checkbox"
                 checked={(data.params as NodeData<"template">["params"]).skipEmpty}
                 onChange={(e) => set({ skipEmpty: e.target.checked })}
               />
@@ -699,6 +774,49 @@ export function PropertiesPanel() {
               Placeholders: <code>&#123;row&#125;</code> (full row), <code>&#123;i&#125;</code> (1-based index), <code>&#123;i0&#125;</code> (0-based index), and <code>&#123;col1&#125;</code>, <code>&#123;col2&#125;</code>… (columns split by delimiter).
             </p>
           </>
+        )}
+
+        {kind === "encode" && (
+          <>
+            <div className="properties__segment" role="group" aria-label="Encode or decode direction">
+              <button
+                type="button"
+                className={(data.params as NodeData<"encode">["params"]).direction === "encode" ? "is-active" : ""}
+                onClick={() => set({ direction: "encode" })}
+              >
+                Encode
+              </button>
+              <button
+                type="button"
+                className={(data.params as NodeData<"encode">["params"]).direction === "decode" ? "is-active" : ""}
+                onClick={() => set({ direction: "decode" })}
+              >
+                Decode
+              </button>
+            </div>
+            <label>
+              Format
+              <select
+                value={(data.params as NodeData<"encode">["params"]).format}
+                onChange={(e) =>
+                  set({ format: e.target.value as NodeData<"encode">["params"]["format"] })
+                }
+              >
+                <option value="base64">Base64 (UTF-8)</option>
+                <option value="url">URL Component (%20)</option>
+                <option value="html">HTML Entities (&amp;amp;, &amp;lt;…)</option>
+                <option value="json">JSON String Escape (\n, \&quot;…)</option>
+                <option value="hex">Hexadecimal (UTF-8 bytes)</option>
+              </select>
+            </label>
+            <p className="properties__note">
+              Transforms each row individually. Invalid encoded strings during Decode pass through unchanged.
+            </p>
+          </>
+        )}
+
+        {kind === "stats" && (
+          <StatsFields params={data.params as NodeData<"stats">["params"]} set={set} />
         )}
 
         {kind === "output" && (
@@ -1259,6 +1377,14 @@ function ExtractFields({
             />
             Trim extracted column value
           </label>
+          <label className="properties__checkbox">
+            <input
+              type="checkbox"
+              checked={params.quoteAware ?? true}
+              onChange={(e) => set({ quoteAware: e.target.checked })}
+            />
+            Quote-aware CSV mode (ignore delimiters inside quotes)
+          </label>
         </>
       )}
 
@@ -1286,7 +1412,10 @@ function ExtractFields({
       {mode === "regex" && (
         <>
           <label>
-            Regular expression
+            <span className="properties__label-row">
+              <span>Regular expression</span>
+              <RegexPresets onSelect={(pattern) => set({ pattern })} />
+            </span>
             <input
               value={params.pattern ?? ""}
               onChange={(e) => set({ pattern: e.target.value })}
@@ -1326,6 +1455,284 @@ function ExtractFields({
         </label>
       )}
     </>
+  );
+}
+
+function StatsFields({
+  params,
+  set,
+}: {
+  params: OperationParams["stats"];
+  set: (patch: Partial<OperationParams["stats"]>) => void;
+}) {
+  const [textGroupOpen, setTextGroupOpen] = useState(false);
+  const [numericGroupOpen, setNumericGroupOpen] = useState(false);
+  const selectedList = resolveStatMetrics(params);
+  const selectedSet = new Set<StatMetricKey>(selectedList);
+  const includeLabels = params.includeLabels ?? true;
+  const hasUniqueOrDup = selectedSet.has("uniqueRows") || selectedSet.has("duplicateRows");
+
+  const isFrequency = params.mode === "frequency";
+  const isAll = !isFrequency && selectedSet.size === ALL_STAT_METRICS.length;
+  const isTextOnly =
+    !isFrequency &&
+    selectedSet.size === TEXT_STAT_METRICS.length &&
+    TEXT_STAT_METRICS.every((k) => selectedSet.has(k));
+  const isNumericOnly =
+    !isFrequency &&
+    selectedSet.size === NUMERIC_STAT_METRICS.length &&
+    NUMERIC_STAT_METRICS.every((k) => selectedSet.has(k));
+  const activePreset = isFrequency
+    ? "frequency"
+    : isAll
+      ? "all"
+      : isTextOnly
+        ? "text"
+        : isNumericOnly
+          ? "numeric"
+          : "custom";
+
+  function applyMetrics(next: StatMetricKey[]) {
+    const nextSet = new Set(next);
+    const ordered = ALL_STAT_METRICS.filter((k) => nextSet.has(k));
+    const nextMode =
+      ordered.length === ALL_STAT_METRICS.length
+        ? "all"
+        : ordered.length === TEXT_STAT_METRICS.length && TEXT_STAT_METRICS.every((k) => nextSet.has(k))
+          ? "text"
+          : ordered.length === NUMERIC_STAT_METRICS.length && NUMERIC_STAT_METRICS.every((k) => nextSet.has(k))
+            ? "numeric"
+            : "custom";
+    set({ mode: nextMode, metrics: ordered });
+  }
+
+  function toggleMetric(key: StatMetricKey) {
+    if (selectedSet.has(key)) {
+      applyMetrics(selectedList.filter((k) => k !== key));
+    } else {
+      applyMetrics([...selectedList, key]);
+    }
+  }
+
+  return (
+    <>
+      <div className="properties__segment" role="group" aria-label="Statistics preset">
+        <button
+          type="button"
+          className={activePreset === "all" ? "is-active" : ""}
+          onClick={() => set({ mode: "all", metrics: [...ALL_STAT_METRICS] })}
+          title="Select all 17 Text & Rows + Numeric metrics"
+        >
+          All (17)
+        </button>
+        <button
+          type="button"
+          className={activePreset === "text" ? "is-active" : ""}
+          onClick={() => set({ mode: "text", metrics: [...TEXT_STAT_METRICS] })}
+          title="Select the 11 row, word, character, and length metrics"
+        >
+          Text &amp; Rows
+        </button>
+        <button
+          type="button"
+          className={activePreset === "numeric" ? "is-active" : ""}
+          onClick={() => set({ mode: "numeric", metrics: [...NUMERIC_STAT_METRICS] })}
+          title="Select the 6 numeric math aggregations"
+        >
+          Numeric
+        </button>
+        <button
+          type="button"
+          className={activePreset === "frequency" ? "is-active" : ""}
+          onClick={() => set({ mode: "frequency" })}
+          title="Output a sorted frequency table of distinct rows with counts and percentages"
+        >
+          Freq
+        </button>
+        <button
+          type="button"
+          className={!isFrequency && selectedSet.size === 0 ? "is-active" : ""}
+          onClick={() => {
+            set({ mode: "custom", metrics: [] });
+            setTextGroupOpen(true);
+            setNumericGroupOpen(true);
+          }}
+          title="Uncheck all metrics so you can pick only the ones you want"
+        >
+          Clear
+        </button>
+      </div>
+
+      <p className="properties__note">
+        {activePreset === "all" && (
+          <>
+            <strong>All (Text + Numeric):</strong> Outputs all 11 <strong>Text &amp; Rows</strong> counts/lengths plus all 6 <strong>Numeric</strong> math aggregations.
+          </>
+        )}
+        {activePreset === "text" && (
+          <>
+            <strong>Text &amp; Rows only:</strong> Outputs row counts, word/character totals, and min/max/avg character length—without numeric math rows.
+          </>
+        )}
+        {activePreset === "numeric" && (
+          <>
+            <strong>Numeric only:</strong> Parses numbers from rows and outputs math aggregations only (<code>Numeric values</code>, <code>Sum</code>, <code>Average</code>, <code>Median</code>, <code>Min</code>, <code>Max</code>).
+          </>
+        )}
+        {activePreset === "frequency" && (
+          <>
+            <strong>Frequency Table:</strong> Counts how many times each distinct row appears and outputs them sorted from most frequent to least frequent with percentages (e.g. <code>apple: 3 (50%)</code>).
+          </>
+        )}
+        {activePreset === "custom" && (
+          <>
+            <strong>Custom selection ({selectedSet.size} of {ALL_STAT_METRICS.length}):</strong> Only the checked statistics below are included in the output.
+          </>
+        )}
+      </p>
+
+      {!isFrequency && (
+        <>
+          <div className="properties__stats-group">
+            <button
+              type="button"
+              className="properties__stats-toggle"
+              aria-expanded={textGroupOpen}
+              onClick={() => setTextGroupOpen((open) => !open)}
+            >
+              <span>Text &amp; Row Metrics</span>
+              <span className="properties__stats-meta">
+                <span className="properties__stats-count">
+                  {TEXT_STAT_METRICS.filter((k) => selectedSet.has(k)).length}/{TEXT_STAT_METRICS.length}
+                </span>
+                <span className="properties__stats-chevron" aria-hidden="true">
+                  {textGroupOpen ? "▾" : "▸"}
+                </span>
+              </span>
+            </button>
+            {textGroupOpen && (
+              <div className="properties__stats-grid">
+                {TEXT_STAT_METRICS.map((key) => (
+                  <label key={key} className="properties__checkbox properties__stats-item">
+                    <input
+                      type="checkbox"
+                      checked={selectedSet.has(key)}
+                      onChange={() => toggleMetric(key)}
+                    />
+                    <span>{STAT_METRIC_LABELS[key]}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="properties__stats-group">
+            <button
+              type="button"
+              className="properties__stats-toggle"
+              aria-expanded={numericGroupOpen}
+              onClick={() => setNumericGroupOpen((open) => !open)}
+            >
+              <span>Numeric Metrics</span>
+              <span className="properties__stats-meta">
+                <span className="properties__stats-count">
+                  {NUMERIC_STAT_METRICS.filter((k) => selectedSet.has(k)).length}/{NUMERIC_STAT_METRICS.length}
+                </span>
+                <span className="properties__stats-chevron" aria-hidden="true">
+                  {numericGroupOpen ? "▾" : "▸"}
+                </span>
+              </span>
+            </button>
+            {numericGroupOpen && (
+              <div className="properties__stats-grid">
+                {NUMERIC_STAT_METRICS.map((key) => (
+                  <label key={key} className="properties__checkbox properties__stats-item">
+                    <input
+                      type="checkbox"
+                      checked={selectedSet.has(key)}
+                      onChange={() => toggleMetric(key)}
+                    />
+                    <span>{STAT_METRIC_LABELS[key]}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      <label className="properties__checkbox">
+        <input
+          type="checkbox"
+          checked={includeLabels}
+          onChange={(e) => set({ includeLabels: e.target.checked })}
+        />
+        Include metric labels (e.g. &quot;Sum: 60.5&quot; vs &quot;60.5&quot;)
+      </label>
+
+      {includeLabels && (
+        <label>
+          Key-value separator
+          <input
+            value={params.separator}
+            onChange={(e) => set({ separator: e.target.value })}
+            placeholder="e.g. :  or , or \t"
+          />
+          <CharTokens value={params.separator} recognizeEscapes />
+        </label>
+      )}
+
+      {(hasUniqueOrDup || isFrequency) && (
+        <label className="properties__checkbox">
+          <input
+            type="checkbox"
+            checked={params.caseSensitive}
+            onChange={(e) => set({ caseSensitive: e.target.checked })}
+          />
+          Case-sensitive {isFrequency ? "frequency grouping" : "unique row count"}
+        </label>
+      )}
+
+      <p className="properties__note">
+        Connect an <strong>Output</strong> node or select <strong>All rows</strong> in Preview to compute across the full dataset.
+      </p>
+    </>
+  );
+}
+
+const REGEX_PRESETS: Array<{ label: string; pattern: string }> = [
+  { label: "Email address", pattern: "([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})" },
+  { label: "URL (http/https)", pattern: "(https?:\\/\\/[^\\s\"'<>]+)" },
+  { label: "IPv4 address", pattern: "(\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b)" },
+  { label: "ISO Date (YYYY-MM-DD)", pattern: "(\\b\\d{4}-\\d{2}-\\d{2}\\b)" },
+  { label: "Numbers only", pattern: "(-?\\d+(?:\\.\\d+)?)" },
+  { label: "Double-quoted string", pattern: "\"([^\"]*)\"" },
+  { label: "HTML / XML tags", pattern: "<[^>]+>" },
+  { label: "Whitespace (1+)", pattern: "\\s+" },
+];
+
+function RegexPresets({ onSelect }: { onSelect: (pattern: string) => void }) {
+  return (
+    <select
+      className="properties__preset-select"
+      value=""
+      onChange={(e) => {
+        if (e.target.value) {
+          onSelect(e.target.value);
+        }
+      }}
+      aria-label="Insert regex preset"
+      title="Choose a common regular expression preset"
+    >
+      <option value="" disabled>
+        Presets ▾
+      </option>
+      {REGEX_PRESETS.map((preset) => (
+        <option key={preset.label} value={preset.pattern}>
+          {preset.label}
+        </option>
+      ))}
+    </select>
   );
 }
 

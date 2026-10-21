@@ -7,7 +7,8 @@
 
 ## Key Capabilities
 
-- **Visual Node-Graph Pipeline**: Drag and connect operations on an interactive canvas, splice nodes onto existing edges, or use magnetic auto-connect.
+- **Visual Node-Graph Pipeline**: Drag and connect operations on an interactive canvas, splice nodes onto existing edges, use magnetic auto-connect, or press `/` (`Ctrl+K` / double-click canvas) to open the Quick-Add command palette and auto-connect nodes.
+- **Workflow & Inspection Tools**: Auto-arrange messy graphs into clean left-to-right columns (`✦ Tidy Graph`), temporarily mute/bypass any intermediate node (`⚡` / `⊘` or `B`/`M`), add custom node titles and subtitle notes, and inspect any node with a Before/After Diff (`± Diff`), line numbers (`#`), invisible whitespace markers (`·→`), and inline search (`Find`).
 - **Lazy Live Previews**: Inspect any intermediate node's output in real time using Head (first N) or Tail (last N) row/character slicing without loading multi-megabyte files into memory until "Process Now" is clicked.
 - **100% Client-Side Privacy**: No backend server or cloud uploads. Projects and attached CSV/TXT files autosave locally in IndexedDB and can be exported/imported as `.texttool` archives.
 
@@ -18,25 +19,28 @@
 - **Output**: Evaluate the full graph across complete files ("Process Now"), then copy or download the result.
 
 ### Structure & Combine
-- **Split**: Break each row into multiple vertical rows by literal delimiter or regular expression.
+- **Split**: Break each row into multiple vertical rows by literal delimiter, Quote-aware CSV mode (respecting quoted fields), or regular expression (with built-in Regex Presets).
 - **Join**: Combine all rows into a single string with a custom delimiter (optionally skipping empty rows).
 - **Merge (Dual-Input A & B)**: Pair and join rows from two inputs side-by-side (or broadcast a 1-row input across all rows of the other input).
 - **Unmerge (Dual-Output A & B)**: Split each row horizontally at the first or last occurrence of a delimiter into two parallel outputs (`Output A` before delimiter, `Output B` after delimiter).
 - **Compare (Dual-Input A & B)**: Set operations between two lists: Difference (`A − B`), Intersection (`A ∩ B`), Symmetric Difference (`A Δ B`), and Union (`A ∪ B`).
-- **Partition (Dual-Output A & B)**: Route rows matching a text or regex pattern to `Output A` and non-matching rows to `Output B`.
+- **Partition (Dual-Output A & B)**: Route rows matching a text or regex pattern (with built-in Regex Presets) to `Output A` and non-matching rows to `Output B`.
 - **Slice**: Skip first/last N rows (headers/footers), keep a 1-based line range, or sample every Nth row.
 - **Append (Dual-Input A & B)**: Add prefix/suffix text to every row, a specific line, or insert new rows at the start/end/line N.
 
 ### Transform & Filter
 - **Trim**: Strip leading/trailing whitespace or a custom character set (e.g., `{}, '"`) from start, end, or both ends, and optionally collapse internal spaces.
 - **Enclose**: Wrap every row with a prefix and suffix (optionally skipping empty rows).
-- **Replace**: Find and replace literal text or regular expression matches (with capture groups, case-sensitivity toggle, and first/all occurrence control).
+- **Replace**: Find and replace literal text or regular expression matches (with Regex Presets, capture groups, case-sensitivity toggle, and first/all occurrence control).
 - **Case**: Convert rows to `UPPER CASE`, `lower case`, `Title Case`, `Sentence case`, `camelCase`, `PascalCase`, `snake_case`, `kebab-case`, or `CONSTANT_CASE`.
-- **Filter**: Keep or exclude rows matching a text or regex pattern, or strip blank lines.
+- **Filter**: Keep or exclude rows matching a text or regex pattern (with Regex Presets), or strip blank lines.
 - **Sort**: Sort rows vertically, sort delimited items inside each row (e.g., `"a,e,g,b"` -> `"a,b,e,g"`), or both, using Natural (`item2 < item10`), Alphabetical, Numeric, or Length comparison and optional deduplication.
 - **Unique**: Deduplicate rows in original order, keep only duplicates or singles, and optionally prepend occurrence counts (`3 × item`).
 - **Number**: Prefix or suffix rows with sequential numbers (`1. `, `001: `) with custom start, step, and zero-padding.
-- **Extract**: Pull out a specific column index (`1`, `-1`), substring between two delimiters (`[` … `]`), or regex capture group.
+- **Extract**: Pull out a specific column index (`1`, `-1`, with optional Quote-aware CSV mode), substring between two delimiters (`[` … `]`), or regex capture group (with Regex Presets).
 - **Pad / Cut**: Pad rows to a fixed character width (start, end, center) or truncate with an ellipsis.
-- **Template**: Format each row into SQL, JSON, or custom text using `{row}`, `{i}` (1-based index), `{i0}` (0-based index), and `{col1}`, `{col2}`… column placeholders.
+- **Template**: Format each row into SQL, JSON, or custom text using `{row}`, `{i}` (1-based index), `{i0}` (0-based index), and `{col1}`, `{col2}`… column placeholders (with optional Quote-aware CSV mode).
+- **Encode / Decode**: Encode or decode rows using Base64, URL (`%20`), HTML Entities (`&amp;`), JSON String Escape/Unescape, or Hex.
+- **Stats**: Compute text, row, and numeric aggregations (total/non-empty/empty/unique/duplicate rows, word/character counts, min/max/avg row length, and numeric sum/average/median/min/max) or generate a sorted Frequency Table (`item: count (pct%)`).
+
 

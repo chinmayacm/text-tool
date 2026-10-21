@@ -54,6 +54,23 @@ export function evaluateGraph(
     const inc = incoming.get(id) ?? [];
     let result: Rows = [];
 
+    if (node.data.bypassed && node.data.kind !== "input" && node.data.kind !== "output") {
+      if (isDualInputKind(node.data.kind)) {
+        const edgeA = inc.find((e) => e.targetHandle === "a") || inc[0];
+        result = resolveEdge(edgeA);
+      } else if (isDualOutputKind(node.data.kind)) {
+        const input = inc.length > 0 ? resolveEdge(inc[0]) : [];
+        outputs.set(`${id}:a`, input);
+        outputs.set(`${id}:b`, input);
+        result = input;
+      } else {
+        result = inc.length > 0 ? resolveEdge(inc[0]) : [];
+      }
+      outputs.set(id, result);
+      visiting.delete(id);
+      return result;
+    }
+
     if (isDualInputKind(node.data.kind)) {
       const edgeA = inc.find((e) => e.targetHandle === "a") || inc[0];
       const edgeB = inc.find((e) => e.targetHandle === "b") || (inc[0] === edgeA ? inc[1] : inc[0]);

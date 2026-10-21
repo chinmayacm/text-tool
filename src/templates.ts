@@ -532,8 +532,8 @@ export const GRAPH_TEMPLATES: GraphTemplate[] = [
   },
   {
     id: "csv-to-sql-template",
-    name: "CSV Columns to SQL Inserts",
-    description: "Slice (skip header) → Template ({col1}…) → Output",
+    name: "Quoted CSV to SQL Inserts",
+    description: "Slice (skip header) → Template (Quote-aware CSV) → Output",
     createGraph: () => ({
       nodes: [
         {
@@ -543,10 +543,11 @@ export const GRAPH_TEMPLATES: GraphTemplate[] = [
           data: {
             kind: "input",
             label: "CSV Input",
+            note: "Contains quoted commas in Name & Location",
             params: {
               ...defaultParams("input"),
               source: "text",
-              text: "name,role,team\nAlice,Engineer,Core\nBob,Designer,UI\nCarol,Manager,Platform",
+              text: 'name,role,location\n"Smith, Alice",Staff Engineer,"San Francisco, CA"\n"Jones, Bob",Product Designer,"New York, NY"\n"Lee, Carol",Engineering Manager,"Austin, TX"',
               inputType: "lines",
             },
           },
@@ -554,10 +555,11 @@ export const GRAPH_TEMPLATES: GraphTemplate[] = [
         {
           id: "tpl-slice",
           type: "slice",
-          position: { x: 320, y: 190 },
+          position: { x: 340, y: 190 },
           data: {
             kind: "slice",
             label: "Skip Header Row",
+            note: "Drop 1st row (CSV column headers)",
             params: {
               ...defaultParams("slice"),
               mode: "skip",
@@ -569,13 +571,15 @@ export const GRAPH_TEMPLATES: GraphTemplate[] = [
         {
           id: "tpl-template",
           type: "template",
-          position: { x: 580, y: 190 },
+          position: { x: 620, y: 190 },
           data: {
             kind: "template",
             label: "Format SQL Row",
+            note: "Quote-aware CSV keeps commas inside quotes intact",
             params: {
-              template: "INSERT INTO staff (id, name, role, team) VALUES ({i}, '{col1}', '{col2}', '{col3}');",
+              template: "INSERT INTO staff (id, name, role, city) VALUES ({i}, '{col1}', '{col2}', '{col3}');",
               delimiter: ",",
+              quoteAware: true,
               skipEmpty: true,
             },
           },
@@ -583,7 +587,7 @@ export const GRAPH_TEMPLATES: GraphTemplate[] = [
         {
           id: "tpl-output",
           type: "output",
-          position: { x: 860, y: 190 },
+          position: { x: 920, y: 190 },
           data: {
             kind: "output",
             label: "SQL Output",
@@ -626,6 +630,7 @@ export const GRAPH_TEMPLATES: GraphTemplate[] = [
           data: {
             kind: "partition",
             label: "Branch ERRORs",
+            note: "A = matching ERRORs, B = remaining logs",
             params: { pattern: "ERROR", useRegex: false, caseSensitive: true },
           },
         },
@@ -681,6 +686,327 @@ export const GRAPH_TEMPLATES: GraphTemplate[] = [
         { id: "e-3a", source: "tpl-extract", target: "tpl-unique", sourceHandle: null, targetHandle: null },
         { id: "e-4a", source: "tpl-unique", target: "tpl-out-errors", sourceHandle: null, targetHandle: null },
         { id: "e-2b", source: "tpl-partition", target: "tpl-out-info", sourceHandle: "b", targetHandle: null },
+      ],
+    }),
+  },
+  {
+    id: "extract-and-summarize-stats",
+    name: "Extract & Summarize Order Stats",
+    description: "Quote-aware Extract → Numeric Stats & Category Frequency",
+    createGraph: () => ({
+      nodes: [
+        {
+          id: "tpl-input",
+          type: "input",
+          position: { x: 60, y: 200 },
+          data: {
+            kind: "input",
+            label: "Order Rows",
+            note: "CSV with quoted product descriptions",
+            params: {
+              ...defaultParams("input"),
+              source: "text",
+              text: 'Order #101, Audio, "Headphones, Wireless", $120.50\nOrder #102, Peripherals, "Keyboard, Mechanical", $85.00\nOrder #103, Displays, "Monitor, 27-inch 4K", $299.99\nOrder #104, Audio, "USB-C DAC, Portable", $49.50\nOrder #105, Peripherals, "Mouse, Ergonomic", $45.00\nOrder #106, Audio, "Studio Mic, Condenser", $150.00',
+              inputType: "lines",
+            },
+          },
+        },
+        {
+          id: "tpl-extract-price",
+          type: "extract",
+          position: { x: 350, y: 110 },
+          data: {
+            kind: "extract",
+            label: "Extract Price (Col 4)",
+            note: "Quote-aware column 4 ($ amounts)",
+            params: {
+              ...defaultParams("extract"),
+              mode: "column",
+              delimiter: ",",
+              column: 4,
+              quoteAware: true,
+              trimValues: true,
+            },
+          },
+        },
+        {
+          id: "tpl-stats-price",
+          type: "stats",
+          position: { x: 640, y: 110 },
+          data: {
+            kind: "stats",
+            label: "Order Price Stats",
+            note: "Sum, Average, Median, Min & Max",
+            params: {
+              mode: "numeric",
+              separator: ": ",
+              includeLabels: true,
+              caseSensitive: false,
+            },
+          },
+        },
+        {
+          id: "tpl-output-price",
+          type: "output",
+          position: { x: 920, y: 110 },
+          data: {
+            kind: "output",
+            label: "Price Summary",
+            params: { filename: "order-stats.txt" },
+          },
+        },
+        {
+          id: "tpl-extract-cat",
+          type: "extract",
+          position: { x: 350, y: 295 },
+          data: {
+            kind: "extract",
+            label: "Extract Category (Col 2)",
+            params: {
+              ...defaultParams("extract"),
+              mode: "column",
+              delimiter: ",",
+              column: 2,
+              quoteAware: true,
+              trimValues: true,
+            },
+          },
+        },
+        {
+          id: "tpl-stats-freq",
+          type: "stats",
+          position: { x: 640, y: 295 },
+          data: {
+            kind: "stats",
+            label: "Category Frequency",
+            note: "Sorted frequency table with % share",
+            params: {
+              mode: "frequency",
+              separator: ": ",
+              includeLabels: true,
+              caseSensitive: false,
+            },
+          },
+        },
+        {
+          id: "tpl-output-freq",
+          type: "output",
+          position: { x: 920, y: 295 },
+          data: {
+            kind: "output",
+            label: "Category Breakdown",
+            params: { filename: "category-frequency.txt" },
+          },
+        },
+      ],
+      edges: [
+        { id: "e-1a", source: "tpl-input", target: "tpl-extract-price", sourceHandle: null, targetHandle: null },
+        { id: "e-2a", source: "tpl-extract-price", target: "tpl-stats-price", sourceHandle: null, targetHandle: null },
+        { id: "e-3a", source: "tpl-stats-price", target: "tpl-output-price", sourceHandle: null, targetHandle: null },
+        { id: "e-1b", source: "tpl-input", target: "tpl-extract-cat", sourceHandle: null, targetHandle: null },
+        { id: "e-2b", source: "tpl-extract-cat", target: "tpl-stats-freq", sourceHandle: null, targetHandle: null },
+        { id: "e-3b", source: "tpl-stats-freq", target: "tpl-output-freq", sourceHandle: null, targetHandle: null },
+      ],
+    }),
+  },
+  {
+    id: "regex-extract-emails-domains",
+    name: "Regex Extract Emails & Top Domains",
+    description: "Extract (Email Preset) → Lowercase → Unmerge (@) → Domain Frequency",
+    createGraph: () => ({
+      nodes: [
+        {
+          id: "tpl-input",
+          type: "input",
+          position: { x: 60, y: 200 },
+          data: {
+            kind: "input",
+            label: "Raw Ticket Logs",
+            params: {
+              ...defaultParams("input"),
+              source: "text",
+              text: "Ticket #401: Contact ALICE@acme.io regarding invoice\nTicket #402: Escalated by bob.smith@globex.com\nTicket #403: System ping (no email attached)\nTicket #404: Follow up with carol@acme.io\nTicket #405: Approved by dave@initech.org\nTicket #406: Security review from eve@acme.io\nTicket #407: Support request from frank@globex.com",
+              inputType: "lines",
+            },
+          },
+        },
+        {
+          id: "tpl-extract",
+          type: "extract",
+          position: { x: 330, y: 200 },
+          data: {
+            kind: "extract",
+            label: "Extract Email",
+            note: "Regex Preset: Email address (drops unmatched)",
+            params: {
+              ...defaultParams("extract"),
+              mode: "regex",
+              pattern: "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}",
+              group: 0,
+              caseSensitive: false,
+              dropUnmatched: true,
+            },
+          },
+        },
+        {
+          id: "tpl-case",
+          type: "case",
+          position: { x: 600, y: 200 },
+          data: {
+            kind: "case",
+            label: "Lowercase Emails",
+            params: { mode: "lower" },
+          },
+        },
+        {
+          id: "tpl-unmerge",
+          type: "unmerge",
+          position: { x: 850, y: 190 },
+          data: {
+            kind: "unmerge",
+            label: "Split User @ Domain",
+            note: "Output A = username, Output B = domain",
+            params: { delimiter: "@", occurrence: "first", missingFallback: "" },
+          },
+        },
+        {
+          id: "tpl-out-users",
+          type: "output",
+          position: { x: 1130, y: 110 },
+          data: {
+            kind: "output",
+            label: "Usernames (A)",
+            params: { filename: "usernames.txt" },
+          },
+        },
+        {
+          id: "tpl-stats-domains",
+          type: "stats",
+          position: { x: 1130, y: 275 },
+          data: {
+            kind: "stats",
+            label: "Domain Frequency",
+            note: "Rank domains by ticket volume",
+            params: {
+              mode: "frequency",
+              separator: ": ",
+              includeLabels: true,
+              caseSensitive: false,
+            },
+          },
+        },
+        {
+          id: "tpl-out-domains",
+          type: "output",
+          position: { x: 1400, y: 275 },
+          data: {
+            kind: "output",
+            label: "Top Domains (B)",
+            params: { filename: "top-domains.txt" },
+          },
+        },
+      ],
+      edges: [
+        { id: "e-1", source: "tpl-input", target: "tpl-extract", sourceHandle: null, targetHandle: null },
+        { id: "e-2", source: "tpl-extract", target: "tpl-case", sourceHandle: null, targetHandle: null },
+        { id: "e-3", source: "tpl-case", target: "tpl-unmerge", sourceHandle: null, targetHandle: null },
+        { id: "e-4a", source: "tpl-unmerge", target: "tpl-out-users", sourceHandle: "a", targetHandle: null },
+        { id: "e-4b", source: "tpl-unmerge", target: "tpl-stats-domains", sourceHandle: "b", targetHandle: null },
+        { id: "e-5b", source: "tpl-stats-domains", target: "tpl-out-domains", sourceHandle: null, targetHandle: null },
+      ],
+    }),
+  },
+  {
+    id: "decode-base64-and-encode",
+    name: "Decode Base64 & Escape HTML / URL",
+    description: "Encode/Decode (Base64 → HTML Entities & URL %20)",
+    createGraph: () => ({
+      nodes: [
+        {
+          id: "tpl-input",
+          type: "input",
+          position: { x: 60, y: 195 },
+          data: {
+            kind: "input",
+            label: "Base64 Payloads",
+            note: "UTF-8 strings encoded in Base64",
+            params: {
+              ...defaultParams("input"),
+              source: "text",
+              text: "SGVsbG8gJiBXZWxjb21lIQ==\nU2VhcmNoOiBDKysgJiBSdXN0\nMTAwJSBDbGllbnQtU2lkZSA8QXBwPg==",
+              inputType: "lines",
+            },
+          },
+        },
+        {
+          id: "tpl-decode-b64",
+          type: "encode",
+          position: { x: 340, y: 195 },
+          data: {
+            kind: "encode",
+            label: "Decode Base64",
+            note: "Convert Base64 rows back to plain text",
+            params: {
+              format: "base64",
+              direction: "decode",
+            },
+          },
+        },
+        {
+          id: "tpl-encode-html",
+          type: "encode",
+          position: { x: 620, y: 110 },
+          data: {
+            kind: "encode",
+            label: "HTML Entities",
+            note: "Escape &, <, > for safe HTML embedding",
+            params: {
+              format: "html",
+              direction: "encode",
+            },
+          },
+        },
+        {
+          id: "tpl-out-html",
+          type: "output",
+          position: { x: 900, y: 110 },
+          data: {
+            kind: "output",
+            label: "Safe HTML Rows",
+            params: { filename: "safe-html.txt" },
+          },
+        },
+        {
+          id: "tpl-encode-url",
+          type: "encode",
+          position: { x: 620, y: 280 },
+          data: {
+            kind: "encode",
+            label: "URL Encode",
+            note: "Percent-encode for URL query strings",
+            params: {
+              format: "url",
+              direction: "encode",
+            },
+          },
+        },
+        {
+          id: "tpl-out-url",
+          type: "output",
+          position: { x: 900, y: 280 },
+          data: {
+            kind: "output",
+            label: "URL-Encoded Rows",
+            params: { filename: "url-encoded.txt" },
+          },
+        },
+      ],
+      edges: [
+        { id: "e-1", source: "tpl-input", target: "tpl-decode-b64", sourceHandle: null, targetHandle: null },
+        { id: "e-2a", source: "tpl-decode-b64", target: "tpl-encode-html", sourceHandle: null, targetHandle: null },
+        { id: "e-3a", source: "tpl-encode-html", target: "tpl-out-html", sourceHandle: null, targetHandle: null },
+        { id: "e-2b", source: "tpl-decode-b64", target: "tpl-encode-url", sourceHandle: null, targetHandle: null },
+        { id: "e-3b", source: "tpl-encode-url", target: "tpl-out-url", sourceHandle: null, targetHandle: null },
       ],
     }),
   },

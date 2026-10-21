@@ -1,6 +1,13 @@
 import { useEffect, type CSSProperties } from "react";
 import { Handle, Position, useUpdateNodeInternals, type Edge, type NodeProps } from "@xyflow/react";
-import { isDualInputKind, isDualOutputKind, summarizeNode, type NodeData, type OperationKind } from "../../types";
+import {
+  isDualInputKind,
+  isDualOutputKind,
+  OPERATION_LABELS,
+  summarizeNode,
+  type NodeData,
+  type OperationKind,
+} from "../../types";
 import { useGraphStore, type FlowNode } from "../../store/useGraphStore";
 import "./OperationNode.css";
 
@@ -291,8 +298,12 @@ function triangleForHandle(type: "source" | "target", position: Position): strin
 
 export function OperationNode({ id, data, selected }: Props) {
   const kind = data.kind;
+  const canBypass = kind !== "input" && kind !== "output";
+  const isBypassed = Boolean(canBypass && data.bypassed);
+  const hasCustomLabel = data.label.trim() !== "" && data.label.trim() !== OPERATION_LABELS[kind];
   const updateNodeInternals = useUpdateNodeInternals();
   const processFullGraph = useGraphStore((s) => s.processFullGraph);
+  const toggleNodeBypass = useGraphStore((s) => s.toggleNodeBypass);
   const isProcessing = useGraphStore((s) => s.isProcessing);
   const lastProcessTime = useGraphStore((s) => s.lastProcessTime);
 
@@ -330,7 +341,11 @@ export function OperationNode({ id, data, selected }: Props) {
   }, [id, handleLayoutKey, updateNodeInternals]);
 
   return (
-    <div className={`op-node op-node--${kind} ${selected ? "op-node--selected" : ""}`}>
+    <div
+      className={`op-node op-node--${kind} ${selected ? "op-node--selected" : ""} ${
+        isBypassed ? "op-node--bypassed" : ""
+      }`}
+    >
       {isDualInputKind(kind) ? (
         <>
           <Handle
@@ -376,20 +391,51 @@ export function OperationNode({ id, data, selected }: Props) {
         )
       )}
       <div className="op-node__header">
-        <span className="op-node__title">{data.label}</span>
-        <span
-          className={`op-node__mode-badge op-node__mode-badge--${outputMode}`}
-          title={
-            outputMode === "rows"
-              ? "Multiline mode (multiple rows)"
-              : outputMode === "single"
-                ? "Single-line mode (1 value)"
-                : "No output rows"
-          }
-        >
-          {outputMode === "rows" ? "Rows" : outputMode === "single" ? "Single" : "Empty"}
-        </span>
+        <div className="op-node__title-group">
+          <span className="op-node__title" title={data.label}>
+            {data.label}
+          </span>
+          {hasCustomLabel && <span className="op-node__kind-sub">{OPERATION_LABELS[kind]}</span>}
+        </div>
+        <div className="op-node__header-actions">
+          {canBypass && (
+            <button
+              type="button"
+              className={`op-node__bypass-btn nodrag ${isBypassed ? "is-bypassed" : ""}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleNodeBypass(id);
+              }}
+              title={
+                isBypassed
+                  ? "Node is bypassed (muted) — click to re-enable"
+                  : "Bypass node (pass input straight through)"
+              }
+              aria-label={isBypassed ? "Re-enable node" : "Bypass node"}
+              aria-pressed={isBypassed}
+            >
+              {isBypassed ? "⊘" : "⚡"}
+            </button>
+          )}
+          <span
+            className={`op-node__mode-badge op-node__mode-badge--${outputMode}`}
+            title={
+              outputMode === "rows"
+                ? "Multiline mode (multiple rows)"
+                : outputMode === "single"
+                  ? "Single-line mode (1 value)"
+                  : "No output rows"
+            }
+          >
+            {outputMode === "rows" ? "Rows" : outputMode === "single" ? "Single" : "Empty"}
+          </span>
+        </div>
       </div>
+      {data.note && (
+        <div className="op-node__note" title={data.note}>
+          {data.note}
+        </div>
+      )}
       {isDualInputKind(kind) || isDualOutputKind(kind) ? (
         <div className="op-node__merge-body">
           <div className="op-node__merge-row">
@@ -418,7 +464,9 @@ export function OperationNode({ id, data, selected }: Props) {
               {slotLabelB ? ` · ${slotLabelB}` : ""}
             </span>
           </div>
-          <div className="op-node__summary">{summarizeNode(data)}</div>
+          <div className="op-node__summary">
+            {isBypassed ? "Bypassed (pass-through)" : summarizeNode(data)}
+          </div>
         </div>
       ) : kind === "output" ? (
         <div className="op-node__output-body">
@@ -437,7 +485,9 @@ export function OperationNode({ id, data, selected }: Props) {
           )}
         </div>
       ) : (
-        <div className="op-node__summary">{summarizeNode(data)}</div>
+        <div className="op-node__summary">
+          {isBypassed ? "Bypassed (pass-through)" : summarizeNode(data)}
+        </div>
       )}
       {isDualOutputKind(kind) ? (
         <>

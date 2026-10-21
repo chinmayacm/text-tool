@@ -17,7 +17,8 @@ import {
 } from "./operations.ts";
 import { readPreviewText, splitInputText } from "./textSource.ts";
 import { planMagneticConnection } from "../store/magnet.ts";
-import { bridgeDeletedNodes, replaceTargetInputEdge } from "../store/useGraphStore.ts";
+import { bridgeDeletedNodes, layoutGraphTopologically, replaceTargetInputEdge } from "../store/useGraphStore.ts";
+import { GRAPH_TEMPLATES } from "../templates.ts";
 
 test("custom input split keeps the delimiter and decodes escapes", () => {
   assert.deepEqual(splitInputText("a|b|c", { inputType: "custom", delimiter: "|" }), ["a", "b", "c"]);
@@ -469,6 +470,252 @@ test("enhanced existing nodes: trim collapseSpaces, enclose/join skipEmpty, repl
     ["has [unclosed bracket"]
   );
 });
+
+test("Stats operation computes text, row, and numeric aggregations", () => {
+  const textStats = runOperation(
+    {
+      kind: "stats",
+      label: "Stats",
+      params: { mode: "text", separator: ": ", caseSensitive: false },
+    },
+    ["Apple pie", "banana", "apple pie", ""]
+  );
+  assert.deepEqual(textStats, [
+    "Total rows: 4",
+    "Non-empty rows: 3",
+    "Empty rows: 1",
+    "Unique rows: 3",
+    "Duplicate rows: 1",
+    "Total words: 5",
+    "Total characters: 24",
+    "Characters (with newlines): 27",
+    "Min row length: 0",
+    "Max row length: 9",
+    "Avg row length: 6",
+  ]);
+
+  const numericStats = runOperation(
+    {
+      kind: "stats",
+      label: "Stats",
+      params: { mode: "numeric", separator: "\\t", caseSensitive: false },
+    },
+    ["10", "$20.5", "30", "non-numeric"]
+  );
+  assert.deepEqual(numericStats, [
+    "Numeric values\t3",
+    "Sum\t60.5",
+    "Average\t20.1667",
+    "Median\t20.5",
+    "Min value\t10",
+    "Max value\t30",
+  ]);
+
+  const customStats = runOperation(
+    {
+      kind: "stats",
+      label: "Stats",
+      params: {
+        mode: "custom",
+        metrics: ["totalRows", "sum"],
+        includeLabels: false,
+        separator: ": ",
+        caseSensitive: false,
+      },
+    },
+    ["10", "20", "30"]
+  );
+  assert.deepEqual(customStats, ["3", "60"]);
+});
+
+test("Bypassed nodes pass data straight through and layoutGraphTopologically arranges columns", () => {
+  const nodes = [
+    {
+      id: "n-in",
+      type: "input",
+      position: { x: 400, y: 300 },
+      data: {
+        kind: "input" as const,
+        label: "Input",
+        params: {
+          source: "text" as const,
+          text: "apple\nbanana",
+          fileName: "",
+          fileSize: 0,
+          inputType: "lines" as const,
+          delimiter: ",",
+        },
+      },
+    },
+    {
+      id: "n-case",
+      type: "case",
+      position: { x: 100, y: 100 },
+      data: {
+        kind: "case" as const,
+        label: "Make Upper",
+        note: "Should be skipped when bypassed",
+        bypassed: true,
+        params: { mode: "upper" as const },
+      },
+    },
+    {
+      id: "n-out",
+      type: "output",
+      position: { x: 50, y: 400 },
+      data: {
+        kind: "output" as const,
+        label: "Output",
+        params: { filename: "out.txt" },
+      },
+    },
+  ];
+  const edges = [
+    { id: "e1", source: "n-in", target: "n-case", sourceHandle: null, targetHandle: null },
+    { id: "e2", source: "n-case", target: "n-out", sourceHandle: null, targetHandle: null },
+  ];
+
+  // When bypassed: true, n-case passes lowercase rows straight through
+  const outputs = evaluateGraph(nodes, edges);
+  assert.deepEqual(outputs.get("n-out"), ["apple", "banana"]);
+
+  // layoutGraphTopologically orders n-in -> n-case -> n-out from left to right
+  const tidied = layoutGraphTopologically(nodes, edges);
+  const byId = new Map(tidied.map((n) => [n.id, n.position]));
+  assert.ok(byId.get("n-in")!.x < byId.get("n-case")!.x);
+  assert.ok(byId.get("n-case")!.x < byId.get("n-out")!.x);
+});
+
+test("Quote-aware CSV splitting in split, extract, and template", () => {
+  const csvRow = ['"Smith, John", 42, "New York, NY"'];
+
+  // Split with quoteAware: true keeps commas inside quotes intact and unwraps outer quotes
+  const splitOut = runOperation(
+    {
+      kind: "split",
+      label: "Split",
+      params: {
+        delimiter: ",",
+        useRegex: false,
+        quoteAware: true,
+      },
+    },
+    csvRow,
+  );
+  assert.deepEqual(splitOut, ["Smith, John", " 42", "New York, NY"]);
+
+  // Extract column 1 with quoteAware: true
+  const col1 = runOperation(
+    {
+      kind: "extract",
+      label: "Extract",
+      params: {
+        mode: "column",
+        delimiter: ",",
+        column: 1,
+        quoteAware: true,
+        startDelim: "",
+        endDelim: "",
+        pattern: "",
+        group: 0,
+        caseSensitive: false,
+        fallback: "",
+        dropUnmatched: true,
+      },
+    },
+    csvRow,
+  );
+  assert.deepEqual(col1, ["Smith, John"]);
+
+  // Template with quoteAware: true maps {col1}, {col2}, {col3} accurately
+  const templated = runOperation(
+    {
+      kind: "template",
+      label: "Template",
+      params: {
+        template: "Name={col1} | Age={col2} | City={col3}",
+        delimiter: ",",
+        quoteAware: true,
+        skipEmpty: true,
+      },
+    },
+    csvRow,
+  );
+  assert.deepEqual(templated, ["Name=Smith, John | Age=42 | City=New York, NY"]);
+});
+
+test("Encode / Decode operation supports Base64, URL, HTML, JSON, and Hex", () => {
+  const sample = ['Hello "World" & <Friends>!\t✓'];
+
+  for (const format of ["base64", "url", "html", "json", "hex"] as const) {
+    const encoded = runOperation(
+      {
+        kind: "encode",
+        label: "Encode",
+        params: {
+          format,
+          direction: "encode",
+        },
+      },
+      sample,
+    );
+    assert.notDeepEqual(encoded, sample);
+    const decoded = runOperation(
+      {
+        kind: "encode",
+        label: "Decode",
+        params: {
+          format,
+          direction: "decode",
+        },
+      },
+      encoded,
+    );
+    assert.deepEqual(decoded, sample);
+  }
+});
+
+test("Stats frequency table mode outputs sorted item counts and percentages", () => {
+  const rows = ["apple", "banana", "apple", "cherry", "apple", "banana"];
+  const freqWithLabels = runOperation(
+    {
+      kind: "stats",
+      label: "Stats",
+      params: {
+        mode: "frequency",
+        separator: ": ",
+        includeLabels: true,
+        caseSensitive: false,
+      },
+    },
+    rows,
+  );
+  assert.deepEqual(freqWithLabels, [
+    "apple: 3 (50%)",
+    "banana: 2 (33.3333%)",
+    "cherry: 1 (16.6667%)",
+  ]);
+});
+
+test("All GRAPH_TEMPLATES evaluate cleanly with non-empty outputs", () => {
+  assert.ok(GRAPH_TEMPLATES.length >= 12);
+  for (const tpl of GRAPH_TEMPLATES) {
+    const { nodes, edges } = tpl.createGraph();
+    const outputs = evaluateGraph(nodes, edges);
+    const outNodes = nodes.filter((n) => n.data.kind === "output");
+    assert.ok(outNodes.length >= 1, `Template ${tpl.id} must have at least one output node`);
+    for (const outNode of outNodes) {
+      const result = outputs.get(outNode.id) ?? [];
+      assert.ok(
+        result.length > 0 && result.some((r) => r.trim().length > 0),
+        `Template ${tpl.id} output node ${outNode.id} produced empty output`,
+      );
+    }
+  }
+});
+
+
+
 
 
 

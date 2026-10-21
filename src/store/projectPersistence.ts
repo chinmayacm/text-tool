@@ -200,3 +200,80 @@ function isStoredProject(value: unknown): value is ProjectSnapshot {
       file.blob instanceof Blob
   );
 }
+
+interface SaveFilePickerHandle {
+  name: string;
+  createWritable: () => Promise<{
+    write: (data: Blob) => Promise<void>;
+    close: () => Promise<void>;
+  }>;
+}
+
+type ShowSaveFilePickerFn = (options?: {
+  suggestedName?: string;
+  types?: Array<{
+    description: string;
+    accept: Record<string, string[]>;
+  }>;
+}) => Promise<SaveFilePickerHandle>;
+
+export function supportsSaveFilePicker(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    "showSaveFilePicker" in window &&
+    typeof (window as unknown as { showSaveFilePicker?: unknown }).showSaveFilePicker === "function"
+  );
+}
+
+export async function saveBlobWithNativePicker(
+  suggestedName: string,
+  getBlob: () => Promise<Blob> | Blob,
+  fileType?: { description: string; mime: string; extensions: string[] }
+): Promise<{ saved: boolean; name?: string }> {
+  const picker = (window as unknown as { showSaveFilePicker: ShowSaveFilePickerFn }).showSaveFilePicker;
+  try {
+    const handle = await picker({
+      suggestedName,
+      ...(fileType
+        ? {
+            types: [
+              {
+                description: fileType.description,
+                accept: { [fileType.mime]: fileType.extensions },
+              },
+            ],
+          }
+        : {}),
+    });
+    const blob = await getBlob();
+    const writable = await handle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+    return { saved: true, name: handle.name };
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      return { saved: false };
+    }
+    throw err;
+  }
+}
+
+export async function saveTextFile(text: string, suggestedName: string): Promise<void> {
+  const finalName = suggestedName.trim() || "output.txt";
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  if (supportsSaveFilePicker()) {
+    await saveBlobWithNativePicker(finalName, () => blob, {
+      description: "Text file",
+      mime: "text/plain",
+      extensions: [".txt", ".csv", ".sql", ".json", ".md", ".log"],
+    });
+    return;
+  }
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = finalName;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+

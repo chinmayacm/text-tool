@@ -1,4 +1,13 @@
-import type { NodeData, OperationKind, Rows } from "../types.ts";
+import {
+  NUMERIC_STAT_METRICS,
+  resolveStatMetrics,
+  STAT_METRIC_LABELS,
+  TEXT_STAT_METRICS,
+  type NodeData,
+  type OperationKind,
+  type Rows,
+  type StatMetricKey,
+} from "../types.ts";
 import { applyAppend } from "./append.ts";
 import { splitInputText, type PreviewDirection } from "./textSource.ts";
 
@@ -33,6 +42,76 @@ function splitWords(row: string): string[] {
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
     .split(/[^A-Za-z0-9]+/)
     .filter((w) => w.length > 0);
+}
+
+/**
+ * Splits a single row by a literal delimiter while respecting single/double-quoted fields
+ * (e.g. `"Smith, John", 42`), optionally unwrapping outer quotes and unescaping `""` / `''`.
+ */
+export function splitQuoteAware(row: string, delimiter: string, unwrapQuotes = true): string[] {
+  if (!delimiter) return [row];
+  const parts: string[] = [];
+  let current = "";
+  let quoteChar: '"' | "'" | null = null;
+  let i = 0;
+
+  while (i < row.length) {
+    const ch = row[i];
+    if (quoteChar !== null) {
+      if (ch === "\\" && i + 1 < row.length) {
+        current += ch + row[i + 1];
+        i += 2;
+        continue;
+      }
+      if (ch === quoteChar) {
+        if (row[i + 1] === quoteChar) {
+          current += quoteChar + quoteChar;
+          i += 2;
+          continue;
+        }
+        quoteChar = null;
+      }
+      current += ch;
+      i++;
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") {
+      quoteChar = ch;
+      current += ch;
+      i++;
+      continue;
+    }
+
+    if (row.startsWith(delimiter, i)) {
+      parts.push(unwrapQuotedField(current, unwrapQuotes));
+      current = "";
+      i += delimiter.length;
+      continue;
+    }
+
+    current += ch;
+    i++;
+  }
+
+  parts.push(unwrapQuotedField(current, unwrapQuotes));
+  return parts;
+}
+
+function unwrapQuotedField(field: string, unwrap: boolean): string {
+  if (!unwrap) return field;
+  const trimmed = field.trim();
+  if (trimmed.length >= 2) {
+    const first = trimmed[0];
+    const last = trimmed[trimmed.length - 1];
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      const inner = trimmed.slice(1, -1);
+      return first === '"'
+        ? inner.replace(/""/g, '"').replace(/\\"/g, '"')
+        : inner.replace(/''/g, "'").replace(/\\'/g, "'");
+    }
+  }
+  return field;
 }
 
 export interface EvaluateOptions {
@@ -80,9 +159,16 @@ export function runOperation(
       break;
     }
     case "split": {
-      const { delimiter, useRegex } = data.params as NodeData<"split">["params"];
+      const { delimiter, useRegex, quoteAware } = data.params as NodeData<"split">["params"];
       if (!delimiter) {
         result = input;
+      } else if (!useRegex && quoteAware) {
+        const effectiveDelimiter = delimiter.replace(/\\n/g, "\n").replace(/\\t/g, "\t");
+        result = input.flatMap((row) =>
+          splitQuoteAware(row, effectiveDelimiter, true)
+            .map((part) => part.replace(/^\r?\n+|\r?\n+$/g, ""))
+            .filter((part) => part.length > 0)
+        );
       } else {
         const effectiveDelimiter = useRegex ? delimiter : delimiter.replace(/\\n/g, "\n").replace(/\\t/g, "\t");
         const re = toRegExp(effectiveDelimiter, useRegex, "g");
@@ -259,6 +345,14 @@ export function runOperation(
     }
     case "template": {
       result = runTemplateOperation(data.params as NodeData<"template">["params"], input);
+      break;
+    }
+    case "encode": {
+      result = runEncodeOperation(data.params as NodeData<"encode">["params"], input);
+      break;
+    }
+    case "stats": {
+      result = runStatsOperation(data.params as NodeData<"stats">["params"], input);
       break;
     }
     case "output":
@@ -568,8 +662,13 @@ export function runExtractOperation(params: NodeData<"extract">["params"], input
     const delim = (params.delimiter ?? ",").replace(/\\n/g, "\n").replace(/\\t/g, "\t");
     const col = params.column || 1;
     const trimValues = params.trimValues ?? true;
+    const quoteAware = params.quoteAware ?? false;
     for (const row of input) {
-      const parts = delim ? row.split(delim) : [row];
+      const parts = delim
+        ? quoteAware
+          ? splitQuoteAware(row, delim, true)
+          : row.split(delim)
+        : [row];
       const idx = col < 0 ? parts.length + col : col - 1;
       if (idx >= 0 && idx < parts.length) {
         const val = parts[idx];
@@ -643,12 +742,18 @@ export function runTemplateOperation(params: NodeData<"template">["params"], inp
   const tpl = params.template ?? "{row}";
   const delim = (params.delimiter ?? ",").replace(/\\n/g, "\n").replace(/\\t/g, "\t");
   const skipEmpty = params.skipEmpty ?? true;
+  const quoteAware = params.quoteAware ?? false;
 
   let index = 1;
   return input.map((row) => {
     if (skipEmpty && row === "") return row;
     const currentIndex = index++;
-    const cols = delim ? row.split(delim).map((c) => c.trim()) : [row];
+    const rawCols = delim
+      ? quoteAware
+        ? splitQuoteAware(row, delim, true)
+        : row.split(delim)
+      : [row];
+    const cols = rawCols.map((c) => c.trim());
     return tpl
       .replace(/\{row\}/g, () => row)
       .replace(/\{i\}/g, () => String(currentIndex))
@@ -658,6 +763,231 @@ export function runTemplateOperation(params: NodeData<"template">["params"], inp
         return colIdx >= 0 && colIdx < cols.length ? cols[colIdx] : "";
       });
   });
+}
+
+export function runEncodeOperation(params: NodeData<"encode">["params"], input: Rows): Rows {
+  const format = params.format ?? "base64";
+  const direction = params.direction ?? "encode";
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+
+  return input.map((row) => {
+    try {
+      if (format === "base64") {
+        if (direction === "encode") {
+          const bytes = encoder.encode(row);
+          let binary = "";
+          for (const b of bytes) binary += String.fromCharCode(b);
+          return btoa(binary);
+        }
+        const binary = atob(row.trim());
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return decoder.decode(bytes);
+      }
+
+      if (format === "url") {
+        return direction === "encode" ? encodeURIComponent(row) : decodeURIComponent(row);
+      }
+
+      if (format === "html") {
+        if (direction === "encode") {
+          return row
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#39;");
+        }
+        return row
+          .replace(/&#(\d+);/g, (_, dec: string) => String.fromCodePoint(parseInt(dec, 10)))
+          .replace(/&#x([0-9a-fA-F]+);/g, (_, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;|&apos;/g, "'")
+          .replace(/&lt;/g, "<")
+          .replace(/&gt;/g, ">")
+          .replace(/&amp;/g, "&");
+      }
+
+      if (format === "json") {
+        if (direction === "encode") {
+          return JSON.stringify(row).slice(1, -1);
+        }
+        const trimmed = row.trim();
+        if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+          return String(JSON.parse(trimmed));
+        }
+        return String(JSON.parse(`"${row}"`));
+      }
+
+      if (format === "hex") {
+        if (direction === "encode") {
+          const bytes = encoder.encode(row);
+          return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+        }
+        const clean = row.replace(/\s+/g, "");
+        const bytes = new Uint8Array(Math.floor(clean.length / 2));
+        for (let i = 0; i < bytes.length; i++) {
+          const byte = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+          if (Number.isNaN(byte)) return row;
+          bytes[i] = byte;
+        }
+        return decoder.decode(bytes);
+      }
+
+      return row;
+    } catch {
+      return row;
+    }
+  });
+}
+
+function formatStatNumber(n: number): string {
+  if (!Number.isFinite(n)) return "0";
+  return String(Number(n.toFixed(4)));
+}
+
+export function runStatsOperation(params: NodeData<"stats">["params"], input: Rows): Rows {
+  const sep = decodeEscapes(params.separator ?? ": ");
+  const includeLabels = params.includeLabels ?? true;
+  const caseSensitive = params.caseSensitive ?? false;
+
+  if (params.mode === "frequency") {
+    const counts = new Map<string, { label: string; count: number }>();
+    let totalNonEmpty = 0;
+    for (const row of input) {
+      const trimmed = row.trim();
+      if (!trimmed) continue;
+      totalNonEmpty++;
+      const key = caseSensitive ? trimmed : trimmed.toLowerCase();
+      const existing = counts.get(key);
+      if (existing) {
+        existing.count++;
+      } else {
+        counts.set(key, { label: trimmed, count: 1 });
+      }
+    }
+    const entries = [...counts.values()].sort((a, b) => b.count - a.count);
+    return entries.map(({ label, count }) => {
+      if (!includeLabels) return String(count);
+      const pct = totalNonEmpty > 0 ? formatStatNumber((count / totalNonEmpty) * 100) : "0";
+      return `${label}${sep}${count} (${pct}%)`;
+    });
+  }
+
+  const selected = new Set<StatMetricKey>(resolveStatMetrics(params));
+  if (selected.size === 0) return [];
+
+  const formatRow = (key: StatMetricKey, value: string | number) =>
+    includeLabels ? `${STAT_METRIC_LABELS[key]}${sep}${value}` : String(value);
+
+  const out: Rows = [];
+  const totalRows = input.length;
+
+  const needsText = TEXT_STAT_METRICS.some((k) => selected.has(k));
+  const needsNumeric = NUMERIC_STAT_METRICS.some((k) => selected.has(k));
+
+  if (needsText) {
+    let nonEmptyRows = 0;
+    let totalWords = 0;
+    let totalChars = 0;
+    let minLen = totalRows > 0 ? Infinity : 0;
+    let maxLen = 0;
+    const uniqueSet = new Set<string>();
+
+    for (const row of input) {
+      const len = row.length;
+      totalChars += len;
+      if (len < minLen) minLen = len;
+      if (len > maxLen) maxLen = len;
+
+      const trimmed = row.trim();
+      if (trimmed.length > 0) {
+        nonEmptyRows++;
+        totalWords += trimmed.split(/\s+/).length;
+      }
+      uniqueSet.add(caseSensitive ? row : row.toLowerCase());
+    }
+
+    const emptyRows = totalRows - nonEmptyRows;
+    const uniqueRows = uniqueSet.size;
+    const duplicateRows = totalRows - uniqueRows;
+    const avgLen = totalRows > 0 ? totalChars / totalRows : 0;
+    const charsWithNewlines = totalChars + Math.max(0, totalRows - 1);
+
+    const textValues: Record<string, string | number> = {
+      totalRows,
+      nonEmptyRows,
+      emptyRows,
+      uniqueRows,
+      duplicateRows,
+      totalWords,
+      totalChars,
+      charsWithNewlines,
+      minRowLen: minLen,
+      maxRowLen: maxLen,
+      avgRowLen: formatStatNumber(avgLen),
+    };
+
+    for (const key of TEXT_STAT_METRICS) {
+      if (selected.has(key)) {
+        out.push(formatRow(key, textValues[key]));
+      }
+    }
+  }
+
+  if (needsNumeric) {
+    const nums: number[] = [];
+    for (const row of input) {
+      const trimmed = row.trim();
+      if (!trimmed) continue;
+      const direct = Number(trimmed);
+      if (Number.isFinite(direct)) {
+        nums.push(direct);
+      } else {
+        const match = /-?\d+(?:\.\d+)?/.exec(trimmed);
+        if (match) {
+          const parsed = Number(match[0]);
+          if (Number.isFinite(parsed)) nums.push(parsed);
+        }
+      }
+    }
+
+    const count = nums.length;
+    let numericValues: Record<string, string | number>;
+    if (count === 0) {
+      numericValues = {
+        numericCount: 0,
+        sum: 0,
+        average: 0,
+        median: 0,
+        minValue: 0,
+        maxValue: 0,
+      };
+    } else {
+      const sorted = [...nums].sort((a, b) => a - b);
+      const sum = nums.reduce((acc, v) => acc + v, 0);
+      const avg = sum / count;
+      const mid = Math.floor(count / 2);
+      const median = count % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+      numericValues = {
+        numericCount: count,
+        sum: formatStatNumber(sum),
+        average: formatStatNumber(avg),
+        median: formatStatNumber(median),
+        minValue: formatStatNumber(sorted[0]),
+        maxValue: formatStatNumber(sorted[count - 1]),
+      };
+    }
+
+    for (const key of NUMERIC_STAT_METRICS) {
+      if (selected.has(key)) {
+        out.push(formatRow(key, numericValues[key]));
+      }
+    }
+  }
+
+  return out;
 }
 
 
