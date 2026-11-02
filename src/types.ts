@@ -177,6 +177,7 @@ export interface OperationParams {
     column: number;
     trimValues: boolean;
     quoteAware?: boolean;
+    skipHeader?: boolean;
     startDelim: string;
     endDelim: string;
     pattern: string;
@@ -195,6 +196,7 @@ export interface OperationParams {
     delimiter: string;
     skipEmpty: boolean;
     quoteAware?: boolean;
+    skipHeader?: boolean;
   };
   encode: {
     format: "base64" | "url" | "html" | "json" | "hex";
@@ -446,7 +448,9 @@ export function summarizeNode(data: NodeData<OperationKind>): string {
     }
     case "extract": {
       const p = data.params as OperationParams["extract"];
-      if (p.mode === "column") return `Col #${p.column || 1} by "${p.delimiter || ","}"`;
+      if (p.mode === "column") {
+        return `Col #${p.column || 1} by "${p.delimiter || ","}"${p.skipHeader ? " · skip hdr" : ""}`;
+      }
       if (p.mode === "between") return `Between "${p.startDelim}" … "${p.endDelim}"`;
       return `Regex /${p.pattern}/ (group ${p.group ?? 1})`;
     }

@@ -8,7 +8,7 @@ import {
   type NodeData,
   type OperationKind,
 } from "../../types";
-import { useGraphStore, type FlowNode } from "../../store/useGraphStore";
+import { useGraphStore, type FlowNode, type LayoutDirection } from "../../store/useGraphStore";
 import "./OperationNode.css";
 
 type Props = NodeProps & { data: NodeData<OperationKind> };
@@ -46,10 +46,22 @@ function snapVectorToSide(dx: number, dy: number): Position {
   return dx >= 0 ? Position.Right : Position.Left;
 }
 
-function computeHandleLayoutKey(nodeId: string, kind: OperationKind, nodes: FlowNode[], edges: Edge[]): string {
+function computeHandleLayoutKey(
+  nodeId: string,
+  kind: OperationKind,
+  nodes: FlowNode[],
+  edges: Edge[],
+  layoutDirection: LayoutDirection = "horizontal"
+): string {
+  const isVertical = layoutDirection === "vertical";
+  const fallbackTarget = isVertical ? Position.Top : Position.Left;
+  const fallbackSource = isVertical ? Position.Bottom : Position.Right;
+
   const self = nodes.find((n) => n.id === nodeId);
   if (!self) {
-    return `target:${Position.Left}:|a:${Position.Left}:48px|b:${Position.Left}:70px|source:${Position.Right}:`;
+    return isVertical
+      ? `target:${Position.Top}:|a:${Position.Top}:32%|b:${Position.Top}:68%|source:${Position.Bottom}:`
+      : `target:${Position.Left}:|a:${Position.Left}:48px|b:${Position.Left}:70px|source:${Position.Right}:`;
   }
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const selfCenter = nodeCenter(self);
@@ -84,9 +96,9 @@ function computeHandleLayoutKey(nodeId: string, kind: OperationKind, nodes: Flow
 
   const outgoing = edges.filter((e) => e.source === nodeId);
   const avgOut = averageTargetVector(outgoing);
-  let sourcePos: Position = avgOut ? snapVectorToSide(avgOut.dx, avgOut.dy) : Position.Right;
-  const sourceNeighborX = avgOut ? avgOut.x : selfCenter.x + 200;
-  const sourceNeighborY = avgOut ? avgOut.y : selfCenter.y;
+  let sourcePos: Position = avgOut ? snapVectorToSide(avgOut.dx, avgOut.dy) : fallbackSource;
+  const sourceNeighborX = avgOut ? avgOut.x : isVertical ? selfCenter.x : selfCenter.x + 200;
+  const sourceNeighborY = avgOut ? avgOut.y : isVertical ? selfCenter.y + 160 : selfCenter.y;
 
   type RawItem = {
     id: HandleId;
@@ -103,11 +115,11 @@ function computeHandleLayoutKey(nodeId: string, kind: OperationKind, nodes: Flow
     const edgeB = edges.find((e) => e.target === nodeId && e.targetHandle === "b");
     const vecA = neighborVector(edgeA?.source);
     const vecB = neighborVector(edgeB?.source);
-    const defaultTargetSide = sourcePos === Position.Left ? Position.Right : Position.Left;
+    const defaultTargetSide = sourcePos === fallbackTarget ? fallbackSource : fallbackTarget;
     const sideA = vecA ? snapVectorToSide(vecA.dx, vecA.dy) : defaultTargetSide;
     const sideB = vecB ? snapVectorToSide(vecB.dx, vecB.dy) : defaultTargetSide;
-    if (outgoing.length === 0 && (sideA === Position.Right || sideB === Position.Right)) {
-      sourcePos = Position.Left;
+    if (outgoing.length === 0 && (sideA === fallbackSource || sideB === fallbackSource)) {
+      sourcePos = fallbackTarget;
     }
     items.push({
       id: "a",
@@ -138,12 +150,12 @@ function computeHandleLayoutKey(nodeId: string, kind: OperationKind, nodes: Flow
     const vecOutA = averageTargetVector(outA);
     const vecOutB = averageTargetVector(outB);
 
-    let targetPos: Position = vecIn ? snapVectorToSide(vecIn.dx, vecIn.dy) : Position.Left;
-    const defaultSourceSide = targetPos === Position.Right ? Position.Left : Position.Right;
+    let targetPos: Position = vecIn ? snapVectorToSide(vecIn.dx, vecIn.dy) : fallbackTarget;
+    const defaultSourceSide = targetPos === fallbackSource ? fallbackTarget : fallbackSource;
     const sideA = vecOutA ? snapVectorToSide(vecOutA.dx, vecOutA.dy) : defaultSourceSide;
     const sideB = vecOutB ? snapVectorToSide(vecOutB.dx, vecOutB.dy) : defaultSourceSide;
-    if (!vecIn && (sideA === Position.Left || sideB === Position.Left)) {
-      targetPos = Position.Right;
+    if (!vecIn && (sideA === fallbackTarget || sideB === fallbackTarget)) {
+      targetPos = fallbackSource;
     }
     items.push({
       id: "target",
@@ -155,14 +167,14 @@ function computeHandleLayoutKey(nodeId: string, kind: OperationKind, nodes: Flow
     items.push({
       id: "a",
       side: sideA,
-      sortX: vecOutA?.x ?? selfCenter.x + 50,
+      sortX: vecOutA?.x ?? selfCenter.x - 30,
       sortY: vecOutA?.y ?? selfCenter.y - 20,
       order: 1,
     });
     items.push({
       id: "b",
       side: sideB,
-      sortX: vecOutB?.x ?? selfCenter.x + 50,
+      sortX: vecOutB?.x ?? selfCenter.x + 30,
       sortY: vecOutB?.y ?? selfCenter.y + 20,
       order: 2,
     });
@@ -171,14 +183,14 @@ function computeHandleLayoutKey(nodeId: string, kind: OperationKind, nodes: Flow
     const vecIn = neighborVector(incoming?.source);
     let targetPos: Position = vecIn
       ? snapVectorToSide(vecIn.dx, vecIn.dy)
-      : sourcePos === Position.Left
-        ? Position.Right
-        : Position.Left;
-    if (outgoing.length === 0 && targetPos === Position.Right) {
-      sourcePos = Position.Left;
+      : sourcePos === fallbackTarget
+        ? fallbackSource
+        : fallbackTarget;
+    if (outgoing.length === 0 && targetPos === fallbackSource) {
+      sourcePos = fallbackTarget;
     }
     if (!vecIn && sourcePos === targetPos) {
-      targetPos = sourcePos === Position.Left ? Position.Right : Position.Left;
+      targetPos = sourcePos === fallbackTarget ? fallbackSource : fallbackTarget;
     }
     if (kind !== "input") {
       items.push({
@@ -244,12 +256,12 @@ function computeHandleLayoutKey(nodeId: string, kind: OperationKind, nodes: Flow
     return `${id}:${side}:${offset}`;
   };
 
-  const defaultDualSide = isDualOutputKind(kind) ? Position.Right : Position.Left;
+  const defaultDualSide = isDualOutputKind(kind) ? fallbackSource : fallbackTarget;
   return [
-    lookup("target", Position.Left),
+    lookup("target", fallbackTarget),
     lookup("a", defaultDualSide),
     lookup("b", defaultDualSide),
-    lookup("source", Position.Right),
+    lookup("source", fallbackSource),
   ].join("|");
 }
 
@@ -307,7 +319,9 @@ export function OperationNode({ id, data, selected }: Props) {
   const isProcessing = useGraphStore((s) => s.isProcessing);
   const lastProcessTime = useGraphStore((s) => s.lastProcessTime);
 
-  const handleLayoutKey = useGraphStore((s) => computeHandleLayoutKey(id, kind, s.nodes, s.edges));
+  const handleLayoutKey = useGraphStore((s) =>
+    computeHandleLayoutKey(id, kind, s.nodes, s.edges, s.layoutDirection)
+  );
   const layout = parseHandleLayout(handleLayoutKey);
 
   const dualSlotLabelsKey = useGraphStore((s) => {

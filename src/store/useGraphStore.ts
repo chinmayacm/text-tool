@@ -14,6 +14,7 @@ import { nanoid } from "nanoid";
 import { defaultParams, isDualInputKind, isDualOutputKind, OPERATION_LABELS, type NodeData, type OperationKind, type OperationParams, type Rows } from "../types.ts";
 import { readFileRows, readPreviewText, splitInputText, type PreviewDirection } from "../engine/textSource.ts";
 import { evaluateGraph } from "../engine/evaluate.ts";
+import { parseCsvColumns } from "../engine/operations.ts";
 import { pasteClipboard, snapshotSelection, type NodeClipboard } from "./clipboard.ts";
 import { copyInputFile, forgetInputFile, getInputFile, replaceInputFiles, setInputFile } from "./inputFiles.ts";
 import { planMagneticConnection } from "./magnet.ts";
@@ -149,7 +150,13 @@ export function bridgeDeletedNodes(
   return nextEdges;
 }
 
-export function layoutGraphTopologically(nodes: FlowNode[], edges: Edge[]): FlowNode[] {
+export type LayoutDirection = "horizontal" | "vertical";
+
+export function layoutGraphTopologically(
+  nodes: FlowNode[],
+  edges: Edge[],
+  direction: LayoutDirection = "horizontal"
+): FlowNode[] {
   if (nodes.length === 0) return nodes;
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
   const incoming = new Map<string, Edge[]>();
@@ -188,43 +195,82 @@ export function layoutGraphTopologically(nodes: FlowNode[], edges: Edge[]): Flow
   }
 
   const sortedCols = [...columns.keys()].sort((a, b) => a - b);
-  const assignedY = new Map<string, number>();
-  const COL_START_X = 80;
-  const COL_GAP_X = 250;
-  const ROW_GAP_Y = 130;
-  const CENTER_Y = 220;
-
   const newPosById = new Map<string, { x: number; y: number }>();
 
-  for (const c of sortedCols) {
-    const colNodes = columns.get(c)!;
-    colNodes.sort((a, b) => {
-      const incA = incoming.get(a.id) ?? [];
-      const incB = incoming.get(b.id) ?? [];
-      const barycenter = (inc: Edge[], fallbackY: number): number => {
-        if (inc.length === 0) return fallbackY;
-        let sum = 0;
-        for (const e of inc) {
-          const srcY = assignedY.get(e.source) ?? nodeById.get(e.source)?.position.y ?? CENTER_Y;
-          const srcOffset = e.sourceHandle === "b" ? 30 : e.sourceHandle === "a" ? -30 : 0;
-          const tgtOffset = e.targetHandle === "b" ? 20 : e.targetHandle === "a" ? -20 : 0;
-          sum += srcY + srcOffset + tgtOffset;
-        }
-        return sum / inc.length;
-      };
-      const scoreA = barycenter(incA, a.position.y);
-      const scoreB = barycenter(incB, b.position.y);
-      if (Math.abs(scoreA - scoreB) > 1) return scoreA - scoreB;
-      return a.position.y - b.position.y;
-    });
+  if (direction === "vertical") {
+    const assignedX = new Map<string, number>();
+    const ROW_START_Y = 70;
+    const ROW_GAP_Y = 155;
+    const COL_GAP_X = 250;
+    const CENTER_X = 400;
 
-    const startY = CENTER_Y - ((colNodes.length - 1) * ROW_GAP_Y) / 2;
-    colNodes.forEach((node, idx) => {
-      const x = COL_START_X + c * COL_GAP_X;
-      const y = Math.round(startY + idx * ROW_GAP_Y);
-      assignedY.set(node.id, y);
-      newPosById.set(node.id, { x, y });
-    });
+    for (const c of sortedCols) {
+      const rowNodes = columns.get(c)!;
+      rowNodes.sort((a, b) => {
+        const incA = incoming.get(a.id) ?? [];
+        const incB = incoming.get(b.id) ?? [];
+        const barycenter = (inc: Edge[], fallbackX: number): number => {
+          if (inc.length === 0) return fallbackX;
+          let sum = 0;
+          for (const e of inc) {
+            const srcX = assignedX.get(e.source) ?? nodeById.get(e.source)?.position.x ?? CENTER_X;
+            const srcOffset = e.sourceHandle === "b" ? 35 : e.sourceHandle === "a" ? -35 : 0;
+            const tgtOffset = e.targetHandle === "b" ? 25 : e.targetHandle === "a" ? -25 : 0;
+            sum += srcX + srcOffset + tgtOffset;
+          }
+          return sum / inc.length;
+        };
+        const scoreA = barycenter(incA, a.position.x);
+        const scoreB = barycenter(incB, b.position.x);
+        if (Math.abs(scoreA - scoreB) > 1) return scoreA - scoreB;
+        return a.position.x - b.position.x;
+      });
+
+      const startX = CENTER_X - ((rowNodes.length - 1) * COL_GAP_X) / 2;
+      rowNodes.forEach((node, idx) => {
+        const x = Math.round(startX + idx * COL_GAP_X);
+        const y = ROW_START_Y + c * ROW_GAP_Y;
+        assignedX.set(node.id, x);
+        newPosById.set(node.id, { x, y });
+      });
+    }
+  } else {
+    const assignedY = new Map<string, number>();
+    const COL_START_X = 80;
+    const COL_GAP_X = 250;
+    const ROW_GAP_Y = 130;
+    const CENTER_Y = 220;
+
+    for (const c of sortedCols) {
+      const colNodes = columns.get(c)!;
+      colNodes.sort((a, b) => {
+        const incA = incoming.get(a.id) ?? [];
+        const incB = incoming.get(b.id) ?? [];
+        const barycenter = (inc: Edge[], fallbackY: number): number => {
+          if (inc.length === 0) return fallbackY;
+          let sum = 0;
+          for (const e of inc) {
+            const srcY = assignedY.get(e.source) ?? nodeById.get(e.source)?.position.y ?? CENTER_Y;
+            const srcOffset = e.sourceHandle === "b" ? 30 : e.sourceHandle === "a" ? -30 : 0;
+            const tgtOffset = e.targetHandle === "b" ? 20 : e.targetHandle === "a" ? -20 : 0;
+            sum += srcY + srcOffset + tgtOffset;
+          }
+          return sum / inc.length;
+        };
+        const scoreA = barycenter(incA, a.position.y);
+        const scoreB = barycenter(incB, b.position.y);
+        if (Math.abs(scoreA - scoreB) > 1) return scoreA - scoreB;
+        return a.position.y - b.position.y;
+      });
+
+      const startY = CENTER_Y - ((colNodes.length - 1) * ROW_GAP_Y) / 2;
+      colNodes.forEach((node, idx) => {
+        const x = COL_START_X + c * COL_GAP_X;
+        const y = Math.round(startY + idx * ROW_GAP_Y);
+        assignedY.set(node.id, y);
+        newPosById.set(node.id, { x, y });
+      });
+    }
   }
 
   return nodes.map((node) => {
@@ -247,6 +293,7 @@ interface GraphState {
   previewCharLimitMode: PreviewCharLimitMode;
   previewCharCustom: number;
   previewDirection: PreviewDirection;
+  layoutDirection: LayoutDirection;
   clipboard: NodeClipboard | null;
   pasteIndex: number;
   isReadingFile: boolean;
@@ -261,8 +308,15 @@ interface GraphState {
   renameNode: (id: string, label: string) => void;
   setNodeNote: (id: string, note: string) => void;
   toggleNodeBypass: (id: string) => void;
-  tidyGraph: () => void;
+  tidyGraph: (direction?: LayoutDirection) => void;
+  setLayoutDirection: (direction: LayoutDirection) => void;
   quickAddNode: (kind: OperationKind, position?: { x: number; y: number }) => string;
+  fanOutColumns: (
+    sourceNodeId: string,
+    delimiter?: string,
+    quoteAware?: boolean,
+    skipHeader?: boolean
+  ) => string[];
   removeEdge: (id: string) => void;
   setSelectedNode: (id: string | null) => void;
   copySelected: () => boolean;
@@ -308,6 +362,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   previewCharLimitMode: "500",
   previewCharCustom: 1000,
   previewDirection: "head",
+  layoutDirection: "horizontal",
   clipboard: null,
   pasteIndex: 0,
   isReadingFile: false,
@@ -471,13 +526,22 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     });
     get().recompute();
   },
-  tidyGraph: () => {
+  tidyGraph: (direction) => {
+    const dir = direction ?? get().layoutDirection;
     set({
-      nodes: layoutGraphTopologically(get().nodes, get().edges),
+      layoutDirection: dir,
+      nodes: layoutGraphTopologically(get().nodes, get().edges, dir),
+    });
+  },
+  setLayoutDirection: (direction) => {
+    set({
+      layoutDirection: direction,
+      nodes: layoutGraphTopologically(get().nodes, get().edges, direction),
     });
   },
   quickAddNode: (kind, fallbackPosition) => {
     const state = get();
+    const isVertical = state.layoutDirection === "vertical";
     const selected = state.selectedNodeId
       ? state.nodes.find((n) => n.id === state.selectedNodeId)
       : undefined;
@@ -489,7 +553,9 @@ export const useGraphStore = create<GraphState>((set, get) => ({
           (n) => Math.abs(n.position.x - candidate.x) < 60 && Math.abs(n.position.y - candidate.y) < 55
         )
       ) {
-        candidate = { x: candidate.x, y: candidate.y + 110 };
+        candidate = isVertical
+          ? { x: candidate.x + 210, y: candidate.y }
+          : { x: candidate.x, y: candidate.y + 110 };
       }
       return candidate;
     }
@@ -498,13 +564,26 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       const outgoing = state.edges.filter((e) => e.source === selected.id);
       const singleOutEdge = outgoing.length === 1 && kind !== "output" ? outgoing[0] : undefined;
       const basePos = avoidOverlap(
-        { x: selected.position.x + 250, y: selected.position.y },
+        isVertical
+          ? { x: selected.position.x, y: selected.position.y + 155 }
+          : { x: selected.position.x + 250, y: selected.position.y },
         state.nodes
       );
 
       if (singleOutEdge) {
         const targetNode = state.nodes.find((n) => n.id === singleOutEdge.target);
-        if (targetNode && targetNode.position.x < basePos.x + 180) {
+        if (isVertical) {
+          if (targetNode && targetNode.position.y < basePos.y + 110) {
+            const shiftY = basePos.y + 155 - targetNode.position.y;
+            set({
+              nodes: state.nodes.map((n) =>
+                n.position.y >= targetNode.position.y - 10
+                  ? { ...n, position: { x: n.position.x, y: n.position.y + shiftY } }
+                  : n
+              ),
+            });
+          }
+        } else if (targetNode && targetNode.position.x < basePos.x + 180) {
           const shiftX = basePos.x + 250 - targetNode.position.x;
           set({
             nodes: state.nodes.map((n) =>
@@ -544,13 +623,26 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         const inEdge = incoming[0];
         const sourceNode = state.nodes.find((n) => n.id === inEdge.source);
         const basePos = avoidOverlap(
-          {
-            x: sourceNode ? sourceNode.position.x + 250 : selected.position.x - 250,
-            y: selected.position.y,
-          },
+          isVertical
+            ? {
+                x: selected.position.x,
+                y: sourceNode ? sourceNode.position.y + 155 : selected.position.y - 155,
+              }
+            : {
+                x: sourceNode ? sourceNode.position.x + 250 : selected.position.x - 250,
+                y: selected.position.y,
+              },
           state.nodes
         );
-        if (selected.position.x < basePos.x + 180) {
+        if (isVertical) {
+          if (selected.position.y < basePos.y + 110) {
+            set({
+              nodes: state.nodes.map((n) =>
+                n.id === selected.id ? { ...n, position: { x: n.position.x, y: basePos.y + 155 } } : n
+              ),
+            });
+          }
+        } else if (selected.position.x < basePos.x + 180) {
           set({
             nodes: state.nodes.map((n) =>
               n.id === selected.id ? { ...n, position: { x: basePos.x + 250, y: n.position.y } } : n
@@ -576,6 +668,79 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       selectedNodeId: newId,
     });
     return newId;
+  },
+  fanOutColumns: (sourceNodeId, delimiter = ",", quoteAware = true, skipHeader = true) => {
+    const state = get();
+    const sourceNode = state.nodes.find((n) => n.id === sourceNodeId);
+    if (!sourceNode || sourceNode.data.kind === "output") return [];
+    const rows = state.outputs.get(sourceNodeId) ?? [];
+    const firstRow = rows.find((r) => r.trim().length > 0) ?? "";
+    const cols = parseCsvColumns(firstRow, delimiter, quoteAware).slice(0, 12);
+    if (cols.length <= 1) return [];
+
+    const isVertical = state.layoutDirection === "vertical";
+    const sourceHandle = normalizeOutputSlot(sourceNode.data.kind, null);
+    const createdNodes: FlowNode[] = [];
+    let nextEdges = [...state.edges];
+    const createdIds: string[] = [];
+
+    const startY = sourceNode.position.y - ((cols.length - 1) * 125) / 2;
+    const startX = sourceNode.position.x - ((cols.length - 1) * 230) / 2;
+
+    cols.forEach((rawHeader, idx) => {
+      const colNum = idx + 1;
+      const cleanHeader = rawHeader.replace(/[\r\n]+/g, " ").trim();
+      const shortHeader = cleanHeader.length > 18 ? `${cleanHeader.slice(0, 18)}…` : cleanHeader;
+      const label = shortHeader ? `Col ${colNum}: ${shortHeader}` : `Column ${colNum}`;
+      const note =
+        skipHeader && shortHeader
+          ? `CSV col #${colNum} ("${shortHeader}", skips header)`
+          : `CSV col #${colNum}`;
+      const id = nanoid(6);
+      createdIds.push(id);
+      const position = isVertical
+        ? { x: Math.round(startX + idx * 230), y: sourceNode.position.y + 165 }
+        : { x: sourceNode.position.x + 260, y: Math.round(startY + idx * 125) };
+
+      createdNodes.push({
+        id,
+        type: "extract",
+        position,
+        selected: idx === 0,
+        data: {
+          kind: "extract",
+          label,
+          note,
+          params: {
+            ...defaultParams("extract"),
+            mode: "column",
+            delimiter,
+            column: colNum,
+            quoteAware,
+            skipHeader,
+            trimValues: true,
+          },
+        },
+      });
+
+      nextEdges = addEdge(
+        {
+          source: sourceNode.id,
+          target: id,
+          sourceHandle,
+          targetHandle: null,
+        },
+        nextEdges
+      );
+    });
+
+    set({
+      nodes: [...state.nodes.map((n) => ({ ...n, selected: false })), ...createdNodes],
+      edges: nextEdges,
+      selectedNodeId: createdIds[0] ?? state.selectedNodeId,
+    });
+    get().recompute();
+    return createdIds;
   },
   removeEdge: (id) => {
     set({ edges: get().edges.filter((edge) => edge.id !== id) });
@@ -660,8 +825,13 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     replaceInputFiles([]);
     previewRows.clear();
     const starter = createStarterGraph();
+    const dir = get().layoutDirection;
+    const starterNodes =
+      dir === "vertical"
+        ? layoutGraphTopologically(starter.nodes, starter.edges, "vertical")
+        : starter.nodes;
     set({
-      nodes: starter.nodes,
+      nodes: starterNodes,
       edges: starter.edges,
       selectedNodeId: null,
       viewport: { x: 0, y: 0, zoom: 1 },
@@ -684,7 +854,12 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     if (!template) return;
     replaceInputFiles([]);
     previewRows.clear();
-    const { nodes, edges } = template.createGraph();
+    const { nodes: rawNodes, edges } = template.createGraph();
+    const dir = get().layoutDirection;
+    const nodes =
+      dir === "vertical"
+        ? layoutGraphTopologically(rawNodes, edges, "vertical")
+        : rawNodes;
     const outputNode = nodes.find((node) => node.data.kind === "output");
     set({
       nodes,

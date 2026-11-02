@@ -1,5 +1,5 @@
 import { useRef, useState, type RefObject } from "react";
-import { isValidRegex } from "../engine/operations";
+import { isValidRegex, parseCsvColumns } from "../engine/operations";
 import { formatBytes } from "../engine/textSource";
 import { saveTextFile } from "../store/projectPersistence";
 import { useGraphStore } from "../store/useGraphStore";
@@ -20,6 +20,7 @@ import "./PropertiesPanel.css";
 export function PropertiesPanel() {
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
   const nodes = useGraphStore((s) => s.nodes);
+  const edges = useGraphStore((s) => s.edges);
   const outputs = useGraphStore((s) => s.outputs);
   const fullOutputs = useGraphStore((s) => s.fullOutputs);
   const isProcessing = useGraphStore((s) => s.isProcessing);
@@ -28,6 +29,7 @@ export function PropertiesPanel() {
   const renameNode = useGraphStore((s) => s.renameNode);
   const setNodeNote = useGraphStore((s) => s.setNodeNote);
   const toggleNodeBypass = useGraphStore((s) => s.toggleNodeBypass);
+  const fanOutColumns = useGraphStore((s) => s.fanOutColumns);
   const processFullGraph = useGraphStore((s) => s.processFullGraph);
   const attachInputFile = useGraphStore((s) => s.attachInputFile);
   const clearInputFile = useGraphStore((s) => s.clearInputFile);
@@ -50,6 +52,15 @@ export function PropertiesPanel() {
 
   const data = node.data;
   const kind = data.kind;
+  const incomingEdge = edges.find((e) => e.target === node.id);
+  const upstreamKey = incomingEdge
+    ? incomingEdge.sourceHandle === "a" || incomingEdge.sourceHandle === "b"
+      ? `${incomingEdge.source}:${incomingEdge.sourceHandle}`
+      : incomingEdge.source
+    : null;
+  const upstreamRows = upstreamKey
+    ? (outputs.get(upstreamKey) ?? outputs.get(incomingEdge!.source) ?? [])
+    : [];
 
   function set(patch: Partial<NodeData["params"]>) {
     updateNodeParams(node!.id, patch);
@@ -122,11 +133,13 @@ export function PropertiesPanel() {
           <InputFields
             nodeId={node.id}
             params={data.params as NodeData<"input">["params"]}
+            rows={outputs.get(node.id) ?? []}
             isReadingFile={isReadingFile}
             fileInputRef={fileInputRef}
             set={set}
             attachInputFile={attachInputFile}
             clearInputFile={clearInputFile}
+            fanOutColumns={fanOutColumns}
           />
         )}
 
@@ -680,7 +693,13 @@ export function PropertiesPanel() {
         )}
 
         {kind === "extract" && (
-          <ExtractFields params={data.params as NodeData<"extract">["params"]} set={set} />
+          <ExtractFields
+            params={data.params as NodeData<"extract">["params"]}
+            upstreamRows={upstreamRows}
+            upstreamSourceId={incomingEdge?.source ?? null}
+            fanOutColumns={fanOutColumns}
+            set={set}
+          />
         )}
 
         {kind === "pad" && (
@@ -736,44 +755,11 @@ export function PropertiesPanel() {
         )}
 
         {kind === "template" && (
-          <>
-            <label>
-              Template pattern
-              <textarea
-                rows={3}
-                value={(data.params as NodeData<"template">["params"]).template}
-                onChange={(e) => set({ template: e.target.value })}
-                placeholder="e.g. ({i}) {col1}: {col2}"
-              />
-            </label>
-            <label>
-              Column delimiter (for &#123;col1&#125;, &#123;col2&#125;…)
-              <input
-                value={(data.params as NodeData<"template">["params"]).delimiter}
-                onChange={(e) => set({ delimiter: e.target.value })}
-              />
-              <CharTokens value={(data.params as NodeData<"template">["params"]).delimiter} recognizeEscapes />
-            </label>
-            <label className="properties__checkbox">
-              <input
-                type="checkbox"
-                checked={(data.params as NodeData<"template">["params"]).quoteAware ?? true}
-                onChange={(e) => set({ quoteAware: e.target.checked })}
-              />
-              Quote-aware CSV mode (ignore delimiters inside quotes)
-            </label>
-            <label className="properties__checkbox">
-              <input
-                type="checkbox"
-                checked={(data.params as NodeData<"template">["params"]).skipEmpty}
-                onChange={(e) => set({ skipEmpty: e.target.checked })}
-              />
-              Skip empty rows
-            </label>
-            <p className="properties__note">
-              Placeholders: <code>&#123;row&#125;</code> (full row), <code>&#123;i&#125;</code> (1-based index), <code>&#123;i0&#125;</code> (0-based index), and <code>&#123;col1&#125;</code>, <code>&#123;col2&#125;</code>… (columns split by delimiter).
-            </p>
-          </>
+          <TemplateFields
+            params={data.params as NodeData<"template">["params"]}
+            upstreamRows={upstreamRows}
+            set={set}
+          />
         )}
 
         {kind === "encode" && (
@@ -868,22 +854,39 @@ export function PropertiesPanel() {
 function InputFields({
   nodeId,
   params,
+  rows,
   isReadingFile,
   fileInputRef,
   set,
   attachInputFile,
   clearInputFile,
+  fanOutColumns,
 }: {
   nodeId: string;
   params: OperationParams["input"];
+  rows: string[];
   isReadingFile: boolean;
   fileInputRef: RefObject<HTMLInputElement | null>;
   set: (patch: Partial<OperationParams["input"]>) => void;
   attachInputFile: (id: string, file: File) => void;
   clearInputFile: (id: string) => void;
+  fanOutColumns: (
+    sourceNodeId: string,
+    delimiter?: string,
+    quoteAware?: boolean,
+    skipHeader?: boolean
+  ) => string[];
 }) {
+  const [csvToolsOpen, setCsvToolsOpen] = useState(false);
+  const [fanOutSkipHeader, setFanOutSkipHeader] = useState(true);
   const source = params.source ?? "text";
   const inputType = params.inputType ?? "lines";
+  const firstRow = rows.find((r) => r.trim().length > 0) ?? "";
+  const detectedCsvCols =
+    inputType === "lines" && firstRow
+      ? parseCsvColumns(firstRow, ",", true).slice(0, 12)
+      : [];
+
   return (
     <>
       <div className="properties__segment" role="group" aria-label="Input source">
@@ -956,6 +959,54 @@ function InputFields({
             placeholder="Paste text here…"
           />
         </label>
+      )}
+      {detectedCsvCols.length >= 2 && (
+        <div className="properties__csv-box">
+          <button
+            type="button"
+            className="properties__stats-toggle"
+            aria-expanded={csvToolsOpen}
+            onClick={() => setCsvToolsOpen((open) => !open)}
+          >
+            <span>CSV Column Fan-Out (Optional)</span>
+            <span className="properties__stats-meta">
+              <span className="properties__stats-count">{detectedCsvCols.length} cols</span>
+              <span className="properties__stats-chevron" aria-hidden="true">
+                {csvToolsOpen ? "▾" : "▸"}
+              </span>
+            </span>
+          </button>
+          {csvToolsOpen && (
+            <>
+              <p className="properties__note">
+                By default, each line is kept as a single row (1 column). Use this only if you want to spawn separate Extract nodes for each comma-separated column.
+              </p>
+              <div className="properties__col-pills">
+                {detectedCsvCols.map((col, idx) => (
+                  <span key={idx} className="properties__col-pill is-static" title={`Column ${idx + 1}: ${col || "(empty)"}`}>
+                    <strong>{idx + 1}:</strong> {col || <em>empty</em>}
+                  </span>
+                ))}
+              </div>
+              <label className="properties__checkbox">
+                <input
+                  type="checkbox"
+                  checked={fanOutSkipHeader}
+                  onChange={(e) => setFanOutSkipHeader(e.target.checked)}
+                />
+                Skip 1st row (CSV header) on spawned nodes
+              </label>
+              <button
+                type="button"
+                className="properties__fanout-btn"
+                onClick={() => fanOutColumns(nodeId, ",", true, fanOutSkipHeader && rows.length > 1)}
+                title="Automatically create and connect an Extract node for each detected CSV column"
+              >
+                ⑃ Fan Out {detectedCsvCols.length} Column Extract Nodes
+              </button>
+            </>
+          )}
+        </div>
       )}
     </>
   );
@@ -1319,12 +1370,29 @@ function SliceFields({
 
 function ExtractFields({
   params,
+  upstreamRows,
+  upstreamSourceId,
+  fanOutColumns,
   set,
 }: {
   params: OperationParams["extract"];
+  upstreamRows: string[];
+  upstreamSourceId: string | null;
+  fanOutColumns: (
+    sourceNodeId: string,
+    delimiter?: string,
+    quoteAware?: boolean,
+    skipHeader?: boolean
+  ) => string[];
   set: (patch: Partial<OperationParams["extract"]>) => void;
 }) {
   const mode = params.mode ?? "column";
+  const firstRow = upstreamRows.find((r) => r.trim().length > 0) ?? "";
+  const detectedCols =
+    mode === "column" && firstRow
+      ? parseCsvColumns(firstRow, params.delimiter ?? ",", params.quoteAware ?? true).slice(0, 12)
+      : [];
+
   return (
     <>
       <div className="properties__segment" role="group" aria-label="Extract mode">
@@ -1368,6 +1436,55 @@ function ExtractFields({
               value={params.column ?? 1}
               onChange={(e) => set({ column: parseInt(e.target.value, 10) || 1 })}
             />
+          </label>
+          {detectedCols.length >= 2 && (
+            <div className="properties__csv-box">
+              <div className="properties__csv-header">
+                <span>Detected columns (click to select)</span>
+              </div>
+              <div className="properties__col-pills">
+                {detectedCols.map((col, idx) => {
+                  const colNum = idx + 1;
+                  const active = (params.column ?? 1) === colNum;
+                  return (
+                    <button
+                      key={colNum}
+                      type="button"
+                      className={`properties__col-pill ${active ? "is-active" : ""}`}
+                      onClick={() => set({ column: colNum })}
+                      title={`Select column ${colNum}: ${col || "(empty)"}`}
+                    >
+                      <strong>{colNum}:</strong> {col || <em>empty</em>}
+                    </button>
+                  );
+                })}
+              </div>
+              {upstreamSourceId && (
+                <button
+                  type="button"
+                  className="properties__fanout-btn"
+                  onClick={() =>
+                    fanOutColumns(
+                      upstreamSourceId,
+                      params.delimiter ?? ",",
+                      params.quoteAware ?? true,
+                      params.skipHeader ?? upstreamRows.length > 1
+                    )
+                  }
+                  title="Spawn an Extract node for every detected column from the upstream source"
+                >
+                  ⑃ Fan Out All {detectedCols.length} Columns
+                </button>
+              )}
+            </div>
+          )}
+          <label className="properties__checkbox">
+            <input
+              type="checkbox"
+              checked={params.skipHeader ?? false}
+              onChange={(e) => set({ skipHeader: e.target.checked })}
+            />
+            Skip 1st row (CSV header)
           </label>
           <label className="properties__checkbox">
             <input
@@ -1454,6 +1571,93 @@ function ExtractFields({
           />
         </label>
       )}
+    </>
+  );
+}
+
+function TemplateFields({
+  params,
+  upstreamRows,
+  set,
+}: {
+  params: OperationParams["template"];
+  upstreamRows: string[];
+  set: (patch: Partial<OperationParams["template"]>) => void;
+}) {
+  const firstRow = upstreamRows.find((r) => r.trim().length > 0) ?? "";
+  const detectedCols = firstRow
+    ? parseCsvColumns(firstRow, params.delimiter ?? ",", params.quoteAware ?? true).slice(0, 12)
+    : [];
+
+  return (
+    <>
+      <label>
+        Template pattern
+        <textarea
+          rows={3}
+          value={params.template}
+          onChange={(e) => set({ template: e.target.value })}
+          placeholder="e.g. ({i}) {col1}: {col2}"
+        />
+      </label>
+      <label>
+        Column delimiter (for &#123;col1&#125;, &#123;col2&#125;…)
+        <input
+          value={params.delimiter}
+          onChange={(e) => set({ delimiter: e.target.value })}
+        />
+        <CharTokens value={params.delimiter} recognizeEscapes />
+      </label>
+      {detectedCols.length >= 2 && (
+        <div className="properties__csv-box">
+          <div className="properties__csv-header">
+            <span>Detected columns (click to insert placeholder)</span>
+          </div>
+          <div className="properties__col-pills">
+            {detectedCols.map((col, idx) => {
+              const token = `{col${idx + 1}}`;
+              return (
+                <button
+                  key={token}
+                  type="button"
+                  className="properties__col-pill"
+                  onClick={() => set({ template: `${params.template}${token}` })}
+                  title={`Append ${token} (${col || "empty"}) to template`}
+                >
+                  <strong>{token}:</strong> {col || <em>empty</em>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      <label className="properties__checkbox">
+        <input
+          type="checkbox"
+          checked={params.skipHeader ?? false}
+          onChange={(e) => set({ skipHeader: e.target.checked })}
+        />
+        Skip 1st row (CSV header)
+      </label>
+      <label className="properties__checkbox">
+        <input
+          type="checkbox"
+          checked={params.quoteAware ?? true}
+          onChange={(e) => set({ quoteAware: e.target.checked })}
+        />
+        Quote-aware CSV mode (ignore delimiters inside quotes)
+      </label>
+      <label className="properties__checkbox">
+        <input
+          type="checkbox"
+          checked={params.skipEmpty}
+          onChange={(e) => set({ skipEmpty: e.target.checked })}
+        />
+        Skip empty rows
+      </label>
+      <p className="properties__note">
+        Placeholders: <code>&#123;row&#125;</code> (full row), <code>&#123;i&#125;</code> (1-based index), <code>&#123;i0&#125;</code> (0-based index), and <code>&#123;col1&#125;</code>, <code>&#123;col2&#125;</code>… (columns split by delimiter).
+      </p>
     </>
   );
 }

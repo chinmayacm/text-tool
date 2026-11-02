@@ -94,6 +94,38 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
+.canvas__dir-group {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(28, 28, 31, 0.92);
+  border: 1px solid #3c3c44;
+  border-radius: 7px;
+  padding: 2px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.canvas__dir-btn {
+  padding: 4px 9px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: #a1a1aa;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.canvas__dir-btn:hover {
+  color: #e4e4e7;
+}
+
+.canvas__dir-btn.is-active {
+  background: #2f3342;
+  color: #9bc3ff;
+  box-shadow: inset 0 0 0 1px rgba(100, 160, 255, 0.35);
+}
+
 .quick-add-backdrop {
   position: absolute;
   inset: 0;

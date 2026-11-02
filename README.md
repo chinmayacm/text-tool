@@ -24,7 +24,7 @@ npm run preview
 
 ## Basic Workflow
 
-1. A fresh project starts with an **Input** node connected to an **Output** node—or expand **Examples** in the sidebar to load a ready-made pipeline (**Rows to Quoted List**, **Quoted List to Rows**, **Clean & Filter Lines**, **Merge Two Lists**, **Unmerge JSON Key-Values**, **Sort & Deduplicate Tag Rows**, **Compare Two Lists (A − B)**, **Quoted CSV to SQL Inserts**, **Partition & Count Log Errors**, **Extract & Summarize Order Stats**, **Regex Extract Emails & Top Domains**, or **Decode Base64 & Escape HTML / URL**).
+1. A fresh project starts with an **Input** node connected to an **Output** node—or expand **Examples** in the sidebar to load a ready-made pipeline (**Rows to Quoted List**, **Quoted List to Rows**, **Clean & Filter Lines**, **Merge Two Lists**, **Unmerge JSON Key-Values**, **Sort & Deduplicate Tag Rows**, **Compare Two Lists (A − B)**, **Quoted CSV to SQL Inserts**, **Partition & Count Log Errors**, **Extract & Summarize Order Stats**, **CSV Two Columns to JSON Array**, **Regex Extract Emails & Top Domains**, or **Decode Base64 & Escape HTML / URL**).
 2. Drag operation nodes from the **Nodes** section onto the canvas (or drop them directly onto an existing connection line to splice them in). Nodes in the sidebar are grouped by role (**I/O**, **Structure & Combine**, and **Transform & Filter**), and hovering over any node for a moment shows a short description of what it does.
 3. Select a node to edit its settings in the **Properties** panel (hover the `?` icon in the Properties header for a quick summary of the node type) and inspect its result in **Preview**.
 4. Click **Process Now** on the **Output** node to evaluate the full graph, then copy or download the result.
@@ -45,7 +45,7 @@ Choose how the source becomes rows:
 - **Custom** splits at the literal delimiter you enter. The special strings `\\n` and `\\t` represent a line break and tab. For example, enter `,` to split on commas.
 - **Whole** keeps the entire source as one value.
 
-For CSV files that contain quoted fields with commas (such as `"Smith, John", 42`), keep **Input** on **Newline** so each CSV record stays on its own row, and enable **Quote-aware CSV (ignore delimiters inside quotes)** in downstream **Split**, **Extract**, or **Template** nodes.
+For CSV files that contain multiple columns or quoted fields with commas (such as `"Smith, John", 42`), keep **Input** on **Newline** so each CSV record stays on its own row. When an Input node detects comma-separated columns in the first row, the Properties panel displays the detected column headers (`1: name`, `2: role`, `3: location`…) and a 1-click **`⑃ Fan Out N Column Extract Nodes`** button that automatically spawns and connects a parallel **Extract** node for each column.
 
 Live previews evaluate lazily up to the active row or character limit (from either the **Head** or **Tail** of the input). File-backed live previews read only a bounded portion of a file: at most 256 KiB, 200 rows, or 8,000 characters, depending on the selected split mode and preview limits. Choosing **All** in Preview does not bypass these file-preview safety caps. **Process Now** reads the complete file and evaluates the graph; large files can therefore require significant device memory.
 
@@ -159,7 +159,7 @@ Add sequential numbering to the **Prefix (start)** or **Suffix (end)** of each r
 
 Pull out a specific part of each row using one of three modes:
 
-- **Column**: split each row by **Delimiter** and pick a 1-based **Column number** (or negative to count from the end, e.g., `-1` for the last column). Enable **Quote-aware CSV (ignore delimiters inside quotes)** when extracting columns from CSV rows that contain quoted commas.
+- **Column**: split each row by **Delimiter** and pick a 1-based **Column number** (or negative to count from the end, e.g., `-1` for the last column). When connected to a multi-column source, **Extract** automatically displays clickable **Detected columns** pills (`1: id`, `2: name`, `3: email`…) so you can select a column by name without counting commas, plus a **`⑃ Fan Out All N Columns`** button, **Skip 1st row (CSV header)** toggle, and **Quote-aware CSV (ignore delimiters inside quotes)**.
 - **Between**: extract the substring between **Start delimiter** and **End delimiter** (for example between `[` and `]`).
 - **Regex**: extract a regular expression match (or choose a pattern from **`Presets ▾`**) or specific **Capture group** (`0` = full match, `1+` = group).
 - Rows without a match can either be dropped (**Drop rows without a match**) or replaced with **Fallback when not found**.
@@ -170,7 +170,7 @@ Pad rows to a fixed character width (**Pad end**, **Pad start**, or **Pad both**
 
 ### Template
 
-Format each row into a custom string pattern using placeholders (with optional **Quote-aware CSV** column splitting):
+Format each row into a custom string pattern using placeholders (with clickable **Detected columns** pills to insert `{col1}`, `{col2}`…, **Skip 1st row (CSV header)**, and **Quote-aware CSV** column splitting):
 
 - `{row}` — the full input row
 - `{i}` — 1-based row number (`1`, `2`, `3`…)
@@ -232,7 +232,7 @@ The Preview panel can copy or download the currently displayed preview without r
 ## Canvas Controls
 
 - **Add a node:** drag it from the left palette onto the canvas, or use **Quick Add** (`/` or `Ctrl+K` / `Cmd+K`, the **`＋ Quick Add`** toolbar button, or **double-clicking empty canvas**) to search for a node by name and automatically connect it to the currently selected node.
-- **Tidy Graph (`✦ Tidy Graph`):** click **`✦ Tidy Graph`** in the top-left canvas toolbar to automatically arrange all nodes into clean left-to-right topological columns and fit the view.
+- **Tidy Graph & Layout Orientation (`✦ Tidy Graph`, `↔ Horizontal`, `↕ Vertical`):** click **`✦ Tidy Graph`** in the top-left canvas toolbar to automatically arrange all nodes into clean topological columns or rows and fit the view. Use the **`↔ Horizontal`** (Left → Right) and **`↕ Vertical`** (Top → Bottom) toggle buttons to switch the graph layout direction; newly added nodes, unconnected handle defaults, and loaded examples automatically follow the active orientation.
 - **Bypass / Mute a node (`⚡` / `⊘`):** click the `⚡` button in any intermediate node's header (or in Properties, or press `B` or `M` while a node is selected) to temporarily bypass that step and pass incoming data straight through untouched.
 - **Connect nodes & smart handles:** drag from a node's output handle (outward triangle `▸`/`▾`/`◂`/`▴`) to another node's input handle (inward triangle). Single-input nodes accept one incoming connection at a time—connecting a new node automatically replaces the previous incoming connection. Handles automatically snap to the closest side of the node (**Top**, **Right**, **Bottom**, or **Left**) based on the angle to connected neighbors, and space themselves along the edge so multiple connections on the same side never overlap.
 - **Magnetic connect:** slowly drag an existing node over another node, or drag a palette node over one. Wait for the target to glow, then release to connect. For existing nodes, a quick yank cancels the magnetic connection. Left feeds right in horizontal layouts, and top feeds bottom in vertical layouts.

@@ -579,11 +579,17 @@ test("Bypassed nodes pass data straight through and layoutGraphTopologically arr
   const outputs = evaluateGraph(nodes, edges);
   assert.deepEqual(outputs.get("n-out"), ["apple", "banana"]);
 
-  // layoutGraphTopologically orders n-in -> n-case -> n-out from left to right
-  const tidied = layoutGraphTopologically(nodes, edges);
+  // layoutGraphTopologically orders n-in -> n-case -> n-out from left to right in horizontal mode
+  const tidied = layoutGraphTopologically(nodes, edges, "horizontal");
   const byId = new Map(tidied.map((n) => [n.id, n.position]));
   assert.ok(byId.get("n-in")!.x < byId.get("n-case")!.x);
   assert.ok(byId.get("n-case")!.x < byId.get("n-out")!.x);
+
+  // layoutGraphTopologically orders n-in -> n-case -> n-out from top to bottom in vertical mode
+  const tidiedVertical = layoutGraphTopologically(nodes, edges, "vertical");
+  const byIdVert = new Map(tidiedVertical.map((n) => [n.id, n.position]));
+  assert.ok(byIdVert.get("n-in")!.y < byIdVert.get("n-case")!.y);
+  assert.ok(byIdVert.get("n-case")!.y < byIdVert.get("n-out")!.y);
 });
 
 test("Quote-aware CSV splitting in split, extract, and template", () => {
@@ -604,8 +610,8 @@ test("Quote-aware CSV splitting in split, extract, and template", () => {
   );
   assert.deepEqual(splitOut, ["Smith, John", " 42", "New York, NY"]);
 
-  // Extract column 1 with quoteAware: true
-  const col1 = runOperation(
+  // Extract column 1 with quoteAware: true and skipHeader: true
+  const col1WithHeader = runOperation(
     {
       kind: "extract",
       label: "Extract",
@@ -614,20 +620,21 @@ test("Quote-aware CSV splitting in split, extract, and template", () => {
         delimiter: ",",
         column: 1,
         quoteAware: true,
+        skipHeader: true,
+        trimValues: true,
         startDelim: "",
         endDelim: "",
         pattern: "",
         group: 0,
-        caseSensitive: false,
-        fallback: "",
+        missingFallback: "",
         dropUnmatched: true,
       },
     },
-    csvRow,
+    ["name,age,city", ...csvRow],
   );
-  assert.deepEqual(col1, ["Smith, John"]);
+  assert.deepEqual(col1WithHeader, ["Smith, John"]);
 
-  // Template with quoteAware: true maps {col1}, {col2}, {col3} accurately
+  // Template with quoteAware: true and skipHeader: true maps {col1}, {col2}, {col3} accurately
   const templated = runOperation(
     {
       kind: "template",
@@ -636,10 +643,11 @@ test("Quote-aware CSV splitting in split, extract, and template", () => {
         template: "Name={col1} | Age={col2} | City={col3}",
         delimiter: ",",
         quoteAware: true,
+        skipHeader: true,
         skipEmpty: true,
       },
     },
-    csvRow,
+    ["name,age,city", ...csvRow],
   );
   assert.deepEqual(templated, ["Name=Smith, John | Age=42 | City=New York, NY"]);
 });

@@ -8,7 +8,7 @@
 ## Key Capabilities
 
 - **Visual Node-Graph Pipeline**: Drag and connect operations on an interactive canvas, splice nodes onto existing edges, use magnetic auto-connect, or press `/` (`Ctrl+K` / double-click canvas) to open the Quick-Add command palette and auto-connect nodes.
-- **Workflow & Inspection Tools**: Auto-arrange messy graphs into clean left-to-right columns (`✦ Tidy Graph`), temporarily mute/bypass any intermediate node (`⚡` / `⊘` or `B`/`M`), add custom node titles and subtitle notes, and inspect any node with a Before/After Diff (`± Diff`), line numbers (`#`), invisible whitespace markers (`·→`), and inline search (`Find`).
+- **Workflow & Inspection Tools**: Auto-arrange messy graphs into clean left-to-right columns (`↔ Horizontal`) or top-to-bottom rows (`↕ Vertical`) with `✦ Tidy Graph`, temporarily mute/bypass any intermediate node (`⚡` / `⊘` or `B`/`M`), add custom node titles and subtitle notes, and inspect any node with a Before/After Diff (`± Diff`), line numbers (`#`), invisible whitespace markers (`·→`), and inline search (`Find`).
 - **Lazy Live Previews**: Inspect any intermediate node's output in real time using Head (first N) or Tail (last N) row/character slicing without loading multi-megabyte files into memory until "Process Now" is clicked.
 - **100% Client-Side Privacy**: No backend server or cloud uploads. Projects and attached CSV/TXT files autosave locally in IndexedDB and can be exported/imported as `.texttool` archives.
 

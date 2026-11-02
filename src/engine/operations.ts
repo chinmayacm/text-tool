@@ -652,6 +652,13 @@ export function runNumberOperation(params: NodeData<"number">["params"], input: 
   });
 }
 
+export function parseCsvColumns(row: string, delimiter: string, quoteAware = true): string[] {
+  const delim = (delimiter ?? ",").replace(/\\n/g, "\n").replace(/\\t/g, "\t");
+  if (!delim) return [row];
+  const raw = quoteAware ? splitQuoteAware(row, delim, true) : row.split(delim);
+  return raw.map((c) => c.trim());
+}
+
 export function runExtractOperation(params: NodeData<"extract">["params"], input: Rows): Rows {
   const mode = params.mode ?? "column";
   const missingFallback = params.missingFallback ?? "";
@@ -663,7 +670,8 @@ export function runExtractOperation(params: NodeData<"extract">["params"], input
     const col = params.column || 1;
     const trimValues = params.trimValues ?? true;
     const quoteAware = params.quoteAware ?? false;
-    for (const row of input) {
+    const rows = params.skipHeader ? input.slice(1) : input;
+    for (const row of rows) {
       const parts = delim
         ? quoteAware
           ? splitQuoteAware(row, delim, true)
@@ -743,9 +751,10 @@ export function runTemplateOperation(params: NodeData<"template">["params"], inp
   const delim = (params.delimiter ?? ",").replace(/\\n/g, "\n").replace(/\\t/g, "\t");
   const skipEmpty = params.skipEmpty ?? true;
   const quoteAware = params.quoteAware ?? false;
+  const rows = params.skipHeader ? input.slice(1) : input;
 
   let index = 1;
-  return input.map((row) => {
+  return rows.map((row) => {
     if (skipEmpty && row === "") return row;
     const currentIndex = index++;
     const rawCols = delim

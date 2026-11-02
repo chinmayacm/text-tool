@@ -90,6 +90,8 @@ export function Canvas() {
   const addNode = useGraphStore((s) => s.addNode);
   const quickAddNode = useGraphStore((s) => s.quickAddNode);
   const tidyGraph = useGraphStore((s) => s.tidyGraph);
+  const layoutDirection = useGraphStore((s) => s.layoutDirection);
+  const setLayoutDirection = useGraphStore((s) => s.setLayoutDirection);
   const toggleNodeBypass = useGraphStore((s) => s.toggleNodeBypass);
   const spliceNodeIntoEdge = useGraphStore((s) => s.spliceNodeIntoEdge);
   const removeEdge = useGraphStore((s) => s.removeEdge);
@@ -228,6 +230,16 @@ export function Canvas() {
       void fitView({ padding: 0.22, duration: 220 });
     }, 20);
   }, [tidyGraph, fitView]);
+
+  const handleSetDirection = useCallback(
+    (dir: "horizontal" | "vertical") => {
+      setLayoutDirection(dir);
+      window.setTimeout(() => {
+        void fitView({ padding: 0.22, duration: 220 });
+      }, 20);
+    },
+    [setLayoutDirection, fitView]
+  );
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -399,10 +411,34 @@ export function Canvas() {
           type="button"
           className="canvas__tool-btn"
           onClick={handleTidyGraph}
-          title="Auto-arrange nodes into clean left-to-right topological columns"
+          title={
+            layoutDirection === "vertical"
+              ? "Auto-arrange nodes into clean top-to-bottom topological rows"
+              : "Auto-arrange nodes into clean left-to-right topological columns"
+          }
         >
           ✦ Tidy Graph
         </button>
+        <div className="canvas__dir-group" role="group" aria-label="Graph layout orientation">
+          <button
+            type="button"
+            className={`canvas__dir-btn ${layoutDirection === "horizontal" ? "is-active" : ""}`}
+            onClick={() => handleSetDirection("horizontal")}
+            aria-pressed={layoutDirection === "horizontal"}
+            title="Horizontal layout (Left → Right)"
+          >
+            ↔ Horizontal
+          </button>
+          <button
+            type="button"
+            className={`canvas__dir-btn ${layoutDirection === "vertical" ? "is-active" : ""}`}
+            onClick={() => handleSetDirection("vertical")}
+            aria-pressed={layoutDirection === "vertical"}
+            title="Vertical layout (Top → Bottom)"
+          >
+            ↕ Vertical
+          </button>
+        </div>
       </div>
       <ReactFlow
         nodes={nodes}

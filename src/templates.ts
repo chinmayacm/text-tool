@@ -692,7 +692,7 @@ export const GRAPH_TEMPLATES: GraphTemplate[] = [
   {
     id: "extract-and-summarize-stats",
     name: "Extract & Summarize Order Stats",
-    description: "Quote-aware Extract → Numeric Stats & Category Frequency",
+    description: "Quote-aware Extract (skip header) → Numeric Stats & Category Frequency",
     createGraph: () => ({
       nodes: [
         {
@@ -702,11 +702,11 @@ export const GRAPH_TEMPLATES: GraphTemplate[] = [
           data: {
             kind: "input",
             label: "Order Rows",
-            note: "CSV with quoted product descriptions",
+            note: "CSV with header & quoted descriptions",
             params: {
               ...defaultParams("input"),
               source: "text",
-              text: 'Order #101, Audio, "Headphones, Wireless", $120.50\nOrder #102, Peripherals, "Keyboard, Mechanical", $85.00\nOrder #103, Displays, "Monitor, 27-inch 4K", $299.99\nOrder #104, Audio, "USB-C DAC, Portable", $49.50\nOrder #105, Peripherals, "Mouse, Ergonomic", $45.00\nOrder #106, Audio, "Studio Mic, Condenser", $150.00',
+              text: 'order_id,category,product,price\nOrder #101, Audio, "Headphones, Wireless", $120.50\nOrder #102, Peripherals, "Keyboard, Mechanical", $85.00\nOrder #103, Displays, "Monitor, 27-inch 4K", $299.99\nOrder #104, Audio, "USB-C DAC, Portable", $49.50\nOrder #105, Peripherals, "Mouse, Ergonomic", $45.00\nOrder #106, Audio, "Studio Mic, Condenser", $150.00',
               inputType: "lines",
             },
           },
@@ -717,14 +717,15 @@ export const GRAPH_TEMPLATES: GraphTemplate[] = [
           position: { x: 350, y: 110 },
           data: {
             kind: "extract",
-            label: "Extract Price (Col 4)",
-            note: "Quote-aware column 4 ($ amounts)",
+            label: "Col 4: price",
+            note: "Quote-aware column 4 (skips header)",
             params: {
               ...defaultParams("extract"),
               mode: "column",
               delimiter: ",",
               column: 4,
               quoteAware: true,
+              skipHeader: true,
               trimValues: true,
             },
           },
@@ -761,13 +762,15 @@ export const GRAPH_TEMPLATES: GraphTemplate[] = [
           position: { x: 350, y: 295 },
           data: {
             kind: "extract",
-            label: "Extract Category (Col 2)",
+            label: "Col 2: category",
+            note: "Quote-aware column 2 (skips header)",
             params: {
               ...defaultParams("extract"),
               mode: "column",
               delimiter: ",",
               column: 2,
               quoteAware: true,
+              skipHeader: true,
               trimValues: true,
             },
           },
@@ -806,6 +809,171 @@ export const GRAPH_TEMPLATES: GraphTemplate[] = [
         { id: "e-1b", source: "tpl-input", target: "tpl-extract-cat", sourceHandle: null, targetHandle: null },
         { id: "e-2b", source: "tpl-extract-cat", target: "tpl-stats-freq", sourceHandle: null, targetHandle: null },
         { id: "e-3b", source: "tpl-stats-freq", target: "tpl-output-freq", sourceHandle: null, targetHandle: null },
+      ],
+    }),
+  },
+  {
+    id: "csv-two-columns-to-json",
+    name: "CSV Two Columns to JSON Array",
+    description: "Parallel Extract (Col 2 & Col 3) → Clean → Merge → JSON Array",
+    createGraph: () => ({
+      nodes: [
+        {
+          id: "tpl-input",
+          type: "input",
+          position: { x: 50, y: 200 },
+          data: {
+            kind: "input",
+            label: "Staff CSV",
+            note: "4 columns (we pick Col 2 & Col 3)",
+            params: {
+              ...defaultParams("input"),
+              source: "text",
+              text: 'id,name,email,department\n101,"Smith, Alice",ALICE@acme.io,Engineering\n102,"Jones, Bob",Bob.Jones@acme.io,Design\n103,"Lee, Carol",CAROL@acme.io,Platform',
+              inputType: "lines",
+            },
+          },
+        },
+        {
+          id: "tpl-col-name",
+          type: "extract",
+          position: { x: 320, y: 110 },
+          data: {
+            kind: "extract",
+            label: "Col 2: name",
+            note: "Extract name & skip CSV header",
+            params: {
+              ...defaultParams("extract"),
+              mode: "column",
+              delimiter: ",",
+              column: 2,
+              quoteAware: true,
+              skipHeader: true,
+              trimValues: true,
+            },
+          },
+        },
+        {
+          id: "tpl-escape-name",
+          type: "encode",
+          position: { x: 590, y: 110 },
+          data: {
+            kind: "encode",
+            label: "JSON Escape Name",
+            note: "Safe for JSON string values",
+            params: {
+              format: "json",
+              direction: "encode",
+            },
+          },
+        },
+        {
+          id: "tpl-col-email",
+          type: "extract",
+          position: { x: 320, y: 290 },
+          data: {
+            kind: "extract",
+            label: "Col 3: email",
+            note: "Extract email & skip CSV header",
+            params: {
+              ...defaultParams("extract"),
+              mode: "column",
+              delimiter: ",",
+              column: 3,
+              quoteAware: true,
+              skipHeader: true,
+              trimValues: true,
+            },
+          },
+        },
+        {
+          id: "tpl-lower-email",
+          type: "case",
+          position: { x: 590, y: 290 },
+          data: {
+            kind: "case",
+            label: "Lowercase Email",
+            note: "Normalize email address",
+            params: { mode: "lower" },
+          },
+        },
+        {
+          id: "tpl-merge-json",
+          type: "merge",
+          position: { x: 860, y: 200 },
+          data: {
+            kind: "merge",
+            label: "Pair Name & Email",
+            note: "Combine cleaned Col 2 (A) + Col 3 (B)",
+            params: {
+              delimiter: '", "email": "',
+              missingFallback: "",
+            },
+          },
+        },
+        {
+          id: "tpl-enclose-obj",
+          type: "enclose",
+          position: { x: 1130, y: 200 },
+          data: {
+            kind: "enclose",
+            label: "Wrap JSON Object",
+            params: {
+              prefix: '  {"name": "',
+              suffix: '"}',
+              skipEmpty: true,
+            },
+          },
+        },
+        {
+          id: "tpl-join-objs",
+          type: "join",
+          position: { x: 1390, y: 200 },
+          data: {
+            kind: "join",
+            label: "Join with Comma",
+            params: {
+              delimiter: ",\\n",
+              skipEmpty: true,
+            },
+          },
+        },
+        {
+          id: "tpl-enclose-arr",
+          type: "enclose",
+          position: { x: 1650, y: 200 },
+          data: {
+            kind: "enclose",
+            label: "Wrap JSON Array [ ]",
+            params: {
+              prefix: "[\\n",
+              suffix: "\\n]",
+              skipEmpty: true,
+            },
+          },
+        },
+        {
+          id: "tpl-output",
+          type: "output",
+          position: { x: 1910, y: 200 },
+          data: {
+            kind: "output",
+            label: "JSON Output",
+            params: { filename: "staff.json" },
+          },
+        },
+      ],
+      edges: [
+        { id: "e-1a", source: "tpl-input", target: "tpl-col-name", sourceHandle: null, targetHandle: null },
+        { id: "e-2a", source: "tpl-col-name", target: "tpl-escape-name", sourceHandle: null, targetHandle: null },
+        { id: "e-1b", source: "tpl-input", target: "tpl-col-email", sourceHandle: null, targetHandle: null },
+        { id: "e-2b", source: "tpl-col-email", target: "tpl-lower-email", sourceHandle: null, targetHandle: null },
+        { id: "e-3a", source: "tpl-escape-name", target: "tpl-merge-json", sourceHandle: null, targetHandle: "a" },
+        { id: "e-3b", source: "tpl-lower-email", target: "tpl-merge-json", sourceHandle: null, targetHandle: "b" },
+        { id: "e-4", source: "tpl-merge-json", target: "tpl-enclose-obj", sourceHandle: null, targetHandle: null },
+        { id: "e-5", source: "tpl-enclose-obj", target: "tpl-join-objs", sourceHandle: null, targetHandle: null },
+        { id: "e-6", source: "tpl-join-objs", target: "tpl-enclose-arr", sourceHandle: null, targetHandle: null },
+        { id: "e-7", source: "tpl-enclose-arr", target: "tpl-output", sourceHandle: null, targetHandle: null },
       ],
     }),
   },
