@@ -1178,6 +1178,101 @@ export const GRAPH_TEMPLATES: GraphTemplate[] = [
       ],
     }),
   },
+  {
+    id: "columns-and-json-query",
+    name: "CSV Columns & JSON Path Query",
+    description: "Select & reorder CSV columns into JSON with Columns, and query fields with JSON.",
+    createGraph: () => ({
+      nodes: [
+        {
+          id: "tpl-input",
+          type: "input",
+          position: { x: 60, y: 190 },
+          data: {
+            kind: "input",
+            label: "Input CSV",
+            note: "4 columns: id, name, email, score",
+            params: {
+              ...defaultParams("input"),
+              source: "text",
+              text: 'id,name,email,score\n101,"Smith, Alice",alice@acme.io,95\n102,"Jones, Bob",bob@acme.io,88\n103,"Lee, Carol",carol@acme.io,92',
+              inputType: "lines",
+            },
+          },
+        },
+        {
+          id: "tpl-columns-json",
+          type: "columns",
+          position: { x: 340, y: 190 },
+          data: {
+            kind: "columns",
+            label: "Keep & Reorder → JSON",
+            note: "Keep cols 2 (name), 3 (email), 4 (score) as JSON",
+            params: {
+              ...defaultParams("columns"),
+              mode: "keep",
+              columns: "2, 3, 4",
+              delimiter: ",",
+              quoteAware: true,
+              trimValues: true,
+              skipHeader: true,
+              outputFormat: "json",
+              outputDelimiter: ",",
+              quoteOutput: "auto",
+            },
+          },
+        },
+        {
+          id: "tpl-out-json",
+          type: "output",
+          position: { x: 640, y: 100 },
+          data: {
+            kind: "output",
+            label: "Users JSON Array",
+            params: { filename: "users.json" },
+          },
+        },
+        {
+          id: "tpl-json-query",
+          type: "json",
+          position: { x: 640, y: 280 },
+          data: {
+            kind: "json",
+            label: "Query email",
+            note: "Extract email field from JSON array",
+            params: {
+              ...defaultParams("json"),
+              mode: "query",
+              path: "email",
+              flattenArrays: true,
+              dropMissing: true,
+              missingFallback: "",
+              indent: 2,
+              sortKeys: false,
+              kvDelimiter: ":",
+              parsePrimitives: true,
+            },
+          },
+        },
+        {
+          id: "tpl-out-emails",
+          type: "output",
+          position: { x: 920, y: 280 },
+          data: {
+            kind: "output",
+            label: "Extracted Emails",
+            params: { filename: "emails.txt" },
+          },
+        },
+      ],
+      edges: [
+        { id: "e-1", source: "tpl-input", target: "tpl-columns-json", sourceHandle: null, targetHandle: null },
+        { id: "e-2", source: "tpl-columns-json", target: "tpl-out-json", sourceHandle: null, targetHandle: null },
+        { id: "e-3", source: "tpl-columns-json", target: "tpl-json-query", sourceHandle: null, targetHandle: null },
+        { id: "e-4", source: "tpl-json-query", target: "tpl-out-emails", sourceHandle: null, targetHandle: null },
+      ],
+    }),
+  },
 ];
 
 

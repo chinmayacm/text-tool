@@ -37,6 +37,8 @@ const NODE_GROUPS: Array<{ label: string; group: string; kinds: OperationKind[] 
       "unique",
       "number",
       "extract",
+      "columns",
+      "json",
       "pad",
       "template",
       "encode",
@@ -67,7 +69,31 @@ export function Sidebar({
   const [projectOpen, setProjectOpen] = useState(true);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [nodesOpen, setNodesOpen] = useState(true);
+  const [filterQuery, setFilterQuery] = useState("");
   const [tooltip, setTooltip] = useState<{ kind: OperationKind; top: number; left: number } | null>(null);
+
+  const normalizedQuery = filterQuery.trim().toLowerCase();
+  const isFiltering = normalizedQuery.length > 0;
+
+  const filteredTemplates = GRAPH_TEMPLATES.filter((t) => {
+    if (!isFiltering) return true;
+    return (
+      t.name.toLowerCase().includes(normalizedQuery) ||
+      t.description.toLowerCase().includes(normalizedQuery)
+    );
+  });
+
+  const filteredNodeGroups = NODE_GROUPS.map((section) => ({
+    ...section,
+    kinds: section.kinds.filter((kind) => {
+      if (!isFiltering) return true;
+      return (
+        OPERATION_LABELS[kind].toLowerCase().includes(normalizedQuery) ||
+        kind.toLowerCase().includes(normalizedQuery) ||
+        OPERATION_DESCRIPTIONS[kind].toLowerCase().includes(normalizedQuery)
+      );
+    }),
+  })).filter((section) => section.kinds.length > 0);
 
   useEffect(() => {
     return () => {
@@ -245,33 +271,61 @@ export function Sidebar({
         )}
       </section>
 
+      <div className="sidebar__search">
+        <input
+          type="text"
+          className="sidebar__search-input"
+          value={filterQuery}
+          onChange={(e) => setFilterQuery(e.target.value)}
+          placeholder="Filter nodes & examples…"
+          aria-label="Filter nodes and examples"
+        />
+        {filterQuery && (
+          <button
+            type="button"
+            className="sidebar__search-clear"
+            onClick={() => setFilterQuery("")}
+            title="Clear filter"
+            aria-label="Clear filter"
+          >
+            ×
+          </button>
+        )}
+      </div>
+
       <section className="sidebar__section" aria-label="Examples">
         <button
           type="button"
           className="sidebar__section-toggle"
-          aria-expanded={templatesOpen}
+          aria-expanded={templatesOpen || (isFiltering && filteredTemplates.length > 0)}
           onClick={() => setTemplatesOpen((open) => !open)}
         >
-          <span>Examples</span>
-          <span className="sidebar__chevron" aria-hidden="true">{templatesOpen ? "▾" : "▸"}</span>
+          <span>Examples{isFiltering ? ` (${filteredTemplates.length})` : ""}</span>
+          <span className="sidebar__chevron" aria-hidden="true">
+            {templatesOpen || (isFiltering && filteredTemplates.length > 0) ? "▾" : "▸"}
+          </span>
         </button>
-        {templatesOpen && (
+        {(templatesOpen || (isFiltering && filteredTemplates.length > 0)) && (
           <div className="sidebar__section-body">
             <p className="sidebar__hint">Load a sample pipeline</p>
-            {GRAPH_TEMPLATES.map((template) => (
-              <button
-                key={template.id}
-                type="button"
-                className="sidebar__template-button"
-                onClick={() => {
-                  applyTemplate(template.id);
-                  setExportFilename(template.id);
-                }}
-              >
-                <span className="sidebar__template-name">{template.name}</span>
-                <span className="sidebar__template-desc">{template.description}</span>
-              </button>
-            ))}
+            {filteredTemplates.length === 0 ? (
+              <p className="sidebar__empty">No matching examples</p>
+            ) : (
+              filteredTemplates.map((template) => (
+                <button
+                  key={template.id}
+                  type="button"
+                  className="sidebar__template-button"
+                  onClick={() => {
+                    applyTemplate(template.id);
+                    setExportFilename(template.id);
+                  }}
+                >
+                  <span className="sidebar__template-name">{template.name}</span>
+                  <span className="sidebar__template-desc">{template.description}</span>
+                </button>
+              ))
+            )}
           </div>
         )}
       </section>
@@ -280,33 +334,37 @@ export function Sidebar({
         <button
           type="button"
           className="sidebar__section-toggle"
-          aria-expanded={nodesOpen}
+          aria-expanded={nodesOpen || isFiltering}
           onClick={() => setNodesOpen((open) => !open)}
         >
           <span>Nodes</span>
-          <span className="sidebar__chevron" aria-hidden="true">{nodesOpen ? "▾" : "▸"}</span>
+          <span className="sidebar__chevron" aria-hidden="true">{nodesOpen || isFiltering ? "▾" : "▸"}</span>
         </button>
-        {nodesOpen && (
+        {(nodesOpen || isFiltering) && (
           <div className="sidebar__section-body">
             <p className="sidebar__hint">Drag onto the canvas</p>
-            {NODE_GROUPS.map((section) => (
-              <div key={section.group} className="sidebar__node-group">
-                <div className="sidebar__group-label">{section.label}</div>
-                {section.kinds.map((kind) => (
-                  <div
-                    key={kind}
-                    className={`sidebar__item sidebar__item--${section.group} sidebar__item--${kind}`}
-                    draggable
-                    onMouseEnter={(e) => onItemMouseEnter(e, kind)}
-                    onMouseLeave={clearHoverTooltip}
-                    onDragStart={(e) => onDragStart(e, kind)}
-                    onDragEnd={() => setPaletteDragKind(null)}
-                  >
-                    {OPERATION_LABELS[kind]}
-                  </div>
-                ))}
-              </div>
-            ))}
+            {filteredNodeGroups.length === 0 ? (
+              <p className="sidebar__empty">No matching nodes</p>
+            ) : (
+              filteredNodeGroups.map((section) => (
+                <div key={section.group} className="sidebar__node-group">
+                  <div className="sidebar__group-label">{section.label}</div>
+                  {section.kinds.map((kind) => (
+                    <div
+                      key={kind}
+                      className={`sidebar__item sidebar__item--${section.group} sidebar__item--${kind}`}
+                      draggable
+                      onMouseEnter={(e) => onItemMouseEnter(e, kind)}
+                      onMouseLeave={clearHoverTooltip}
+                      onDragStart={(e) => onDragStart(e, kind)}
+                      onDragEnd={() => setPaletteDragKind(null)}
+                    >
+                      {OPERATION_LABELS[kind]}
+                    </div>
+                  ))}
+                </div>
+              ))
+            )}
           </div>
         )}
       </section>

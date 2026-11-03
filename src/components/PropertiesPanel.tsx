@@ -1,5 +1,5 @@
 import { useRef, useState, type RefObject } from "react";
-import { isValidRegex, parseCsvColumns } from "../engine/operations";
+import { isValidRegex, parseColumnSpec, parseCsvColumns } from "../engine/operations";
 import { formatBytes } from "../engine/textSource";
 import { saveTextFile } from "../store/projectPersistence";
 import { useGraphStore } from "../store/useGraphStore";
@@ -218,6 +218,43 @@ export function PropertiesPanel() {
 
         {kind === "join" && (
           <>
+            <div className="properties__field-group">
+              <span className="properties__group-label">Join mode</span>
+              <div className="properties__segment" role="group" aria-label="Join mode">
+                <button
+                  type="button"
+                  className={((data.params as NodeData<"join">["params"]).mode ?? "all") === "all" ? "is-active" : ""}
+                  onClick={() => set({ mode: "all" })}
+                  title="Combine all incoming rows into one single row"
+                >
+                  All rows (1 line)
+                </button>
+                <button
+                  type="button"
+                  className={(data.params as NodeData<"join">["params"]).mode === "chunk" ? "is-active" : ""}
+                  onClick={() =>
+                    set({
+                      mode: "chunk",
+                      chunkSize: (data.params as NodeData<"join">["params"]).chunkSize ?? 2,
+                    })
+                  }
+                  title="Group every N consecutive rows together while keeping multiple output rows"
+                >
+                  Every N rows
+                </button>
+              </div>
+            </div>
+            {(data.params as NodeData<"join">["params"]).mode === "chunk" && (
+              <label>
+                Rows per group (N)
+                <input
+                  type="number"
+                  min={1}
+                  value={(data.params as NodeData<"join">["params"]).chunkSize ?? 2}
+                  onChange={(e) => set({ chunkSize: Math.max(1, parseInt(e.target.value, 10) || 1) })}
+                />
+              </label>
+            )}
             <label>
               Delimiter
               <input
@@ -234,7 +271,11 @@ export function PropertiesPanel() {
               />
               Skip empty rows before joining
             </label>
-            <p className="properties__note">All input rows are combined into a single output row.</p>
+            <p className="properties__note">
+              {(data.params as NodeData<"join">["params"]).mode === "chunk"
+                ? `Combines every ${(data.params as NodeData<"join">["params"]).chunkSize ?? 2} consecutive rows into 1 row, keeping the output as multiple rows.`
+                : "All input rows are combined into a single output row."}
+            </p>
           </>
         )}
 
@@ -702,6 +743,22 @@ export function PropertiesPanel() {
           />
         )}
 
+        {kind === "columns" && (
+          <ColumnsFields
+            params={data.params as NodeData<"columns">["params"]}
+            upstreamRows={upstreamRows}
+            set={set}
+          />
+        )}
+
+        {kind === "json" && (
+          <JsonFields
+            params={data.params as NodeData<"json">["params"]}
+            upstreamRows={upstreamRows}
+            set={set}
+          />
+        )}
+
         {kind === "pad" && (
           <>
             <label>
@@ -874,39 +931,102 @@ function InputFields({
     sourceNodeId: string,
     delimiter?: string,
     quoteAware?: boolean,
-    skipHeader?: boolean
+    skipHeader?: boolean,
+    selectedColumns?: number[]
   ) => string[];
 }) {
   const [csvToolsOpen, setCsvToolsOpen] = useState(false);
+  const [fanOutDelimiter, setFanOutDelimiter] = useState(",");
+  const [fanOutQuoteAware, setFanOutQuoteAware] = useState(true);
   const [fanOutSkipHeader, setFanOutSkipHeader] = useState(true);
+  const [excludedCols, setExcludedCols] = useState<number[]>([]);
   const source = params.source ?? "text";
   const inputType = params.inputType ?? "lines";
   const firstRow = rows.find((r) => r.trim().length > 0) ?? "";
   const detectedCsvCols =
     inputType === "lines" && firstRow
-      ? parseCsvColumns(firstRow, ",", true).slice(0, 12)
+      ? parseCsvColumns(firstRow, fanOutDelimiter, fanOutQuoteAware).slice(0, 12)
       : [];
+  const excludedSet = new Set(excludedCols);
+  const selectedColNums = detectedCsvCols
+    .map((_, idx) => idx + 1)
+    .filter((colNum) => !excludedSet.has(colNum));
+
+  function toggleFanOutCol(colNum: number) {
+    setExcludedCols((prev) =>
+      prev.includes(colNum) ? prev.filter((c) => c !== colNum) : [...prev, colNum]
+    );
+  }
 
   return (
     <>
-      <div className="properties__segment" role="group" aria-label="Input source">
-        <button type="button" className={source === "text" ? "is-active" : ""} onClick={() => set({ source: "text" })}>
-          Paste
-        </button>
-        <button type="button" className={source === "file" ? "is-active" : ""} onClick={() => set({ source: "file" })}>
-          File
-        </button>
+      <div className="properties__field-group">
+        <span className="properties__group-label">Data source</span>
+        <div className="properties__segment" role="group" aria-label="Input source">
+          <button
+            type="button"
+            className={source === "text" ? "is-active" : ""}
+            onClick={() => set({ source: "text" })}
+            title="Type or paste text directly into the editor below"
+          >
+            Paste
+          </button>
+          <button
+            type="button"
+            className={source === "file" ? "is-active" : ""}
+            onClick={() => set({ source: "file" })}
+            title="Load a local .txt or .csv file from your device (processed 100% in browser)"
+          >
+            File
+          </button>
+        </div>
       </div>
-      <div className="properties__segment" role="group" aria-label="Split mode">
-        <button type="button" className={inputType === "lines" ? "is-active" : ""} onClick={() => set({ inputType: "lines" })}>
-          Newline
-        </button>
-        <button type="button" className={inputType === "custom" ? "is-active" : ""} onClick={() => set({ inputType: "custom" })}>
-          Custom
-        </button>
-        <button type="button" className={inputType === "single" ? "is-active" : ""} onClick={() => set({ inputType: "single" })}>
-          Whole
-        </button>
+
+      <div className="properties__field-group">
+        <span className="properties__group-label">How to split input into rows</span>
+        <div className="properties__segment" role="group" aria-label="Split mode">
+          <button
+            type="button"
+            className={inputType === "lines" ? "is-active" : ""}
+            onClick={() => set({ inputType: "lines" })}
+            title="Split at each line break (\n) — every line becomes one row"
+          >
+            Newline
+          </button>
+          <button
+            type="button"
+            className={inputType === "custom" ? "is-active" : ""}
+            onClick={() => set({ inputType: "custom" })}
+            title="Split into rows using a custom delimiter (e.g. comma, pipe |, or tab \t)"
+          >
+            Custom
+          </button>
+          <button
+            type="button"
+            className={inputType === "single" ? "is-active" : ""}
+            onClick={() => set({ inputType: "single" })}
+            title="Do not split — keep the entire input text as one single row"
+          >
+            Whole
+          </button>
+        </div>
+        <p className="properties__note">
+          {inputType === "lines" && (
+            <>
+              <strong>Newline:</strong> Each line break starts a new row (best for lists, logs, and CSV records).
+            </>
+          )}
+          {inputType === "custom" && (
+            <>
+              <strong>Custom:</strong> Splits the text into separate rows wherever your custom delimiter appears.
+            </>
+          )}
+          {inputType === "single" && (
+            <>
+              <strong>Whole:</strong> Keeps the entire input together as <strong>1 single value</strong> without splitting on line breaks.
+            </>
+          )}
+        </p>
       </div>
       {inputType === "custom" && (
         <label>
@@ -960,7 +1080,7 @@ function InputFields({
           />
         </label>
       )}
-      {detectedCsvCols.length >= 2 && (
+      {inputType === "lines" && firstRow.length > 0 && (
         <div className="properties__csv-box">
           <button
             type="button"
@@ -968,9 +1088,11 @@ function InputFields({
             aria-expanded={csvToolsOpen}
             onClick={() => setCsvToolsOpen((open) => !open)}
           >
-            <span>CSV Column Fan-Out (Optional)</span>
+            <span>Column Fan-Out (Optional)</span>
             <span className="properties__stats-meta">
-              <span className="properties__stats-count">{detectedCsvCols.length} cols</span>
+              <span className="properties__stats-count">
+                {detectedCsvCols.length >= 2 ? `${detectedCsvCols.length} cols` : "1 col"}
+              </span>
               <span className="properties__stats-chevron" aria-hidden="true">
                 {csvToolsOpen ? "▾" : "▸"}
               </span>
@@ -979,31 +1101,104 @@ function InputFields({
           {csvToolsOpen && (
             <>
               <p className="properties__note">
-                By default, each line is kept as a single row (1 column). Use this only if you want to spawn separate Extract nodes for each comma-separated column.
+                By default, each line stays a single row (1 column). Use this helper to spawn separate <strong>Extract</strong> nodes for each column.
               </p>
-              <div className="properties__col-pills">
-                {detectedCsvCols.map((col, idx) => (
-                  <span key={idx} className="properties__col-pill is-static" title={`Column ${idx + 1}: ${col || "(empty)"}`}>
-                    <strong>{idx + 1}:</strong> {col || <em>empty</em>}
-                  </span>
-                ))}
-              </div>
-              <label className="properties__checkbox">
+              <label>
+                Column delimiter (supports \t)
                 <input
-                  type="checkbox"
-                  checked={fanOutSkipHeader}
-                  onChange={(e) => setFanOutSkipHeader(e.target.checked)}
+                  value={fanOutDelimiter}
+                  onChange={(e) => setFanOutDelimiter(e.target.value)}
+                  placeholder="e.g. , or ; or | or \t"
                 />
-                Skip 1st row (CSV header) on spawned nodes
+                <CharTokens value={fanOutDelimiter} recognizeEscapes />
               </label>
-              <button
-                type="button"
-                className="properties__fanout-btn"
-                onClick={() => fanOutColumns(nodeId, ",", true, fanOutSkipHeader && rows.length > 1)}
-                title="Automatically create and connect an Extract node for each detected CSV column"
-              >
-                ⑃ Fan Out {detectedCsvCols.length} Column Extract Nodes
-              </button>
+              {detectedCsvCols.length >= 2 ? (
+                <>
+                  <div className="properties__col-checklist-header">
+                    <span className="properties__csv-columns-title">
+                      Click columns to include ({selectedColNums.length}/{detectedCsvCols.length}):
+                    </span>
+                    <div className="properties__col-quick-btns">
+                      <button
+                        type="button"
+                        className="properties__col-quick-btn"
+                        onClick={() => setExcludedCols([])}
+                      >
+                        All
+                      </button>
+                      <button
+                        type="button"
+                        className="properties__col-quick-btn"
+                        onClick={() =>
+                          setExcludedCols(detectedCsvCols.map((_, idx) => idx + 1))
+                        }
+                      >
+                        None
+                      </button>
+                    </div>
+                  </div>
+                  <div className="properties__col-pills">
+                    {detectedCsvCols.map((col, idx) => {
+                      const colNum = idx + 1;
+                      const isSelected = !excludedSet.has(colNum);
+                      return (
+                        <button
+                          key={colNum}
+                          type="button"
+                          className={`properties__col-pill ${isSelected ? "is-active" : ""}`}
+                          onClick={() => toggleFanOutCol(colNum)}
+                          aria-pressed={isSelected}
+                          title={`Click to ${isSelected ? "exclude" : "include"} Column ${colNum}: ${col || "(empty)"}`}
+                        >
+                          <span>{isSelected ? "✓" : "○"}</span>
+                          <strong>{colNum}:</strong> {col || <em>empty</em>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <label className="properties__checkbox">
+                    <input
+                      type="checkbox"
+                      checked={fanOutQuoteAware}
+                      onChange={(e) => setFanOutQuoteAware(e.target.checked)}
+                    />
+                    Quote-aware CSV mode (ignore delimiters inside quotes)
+                  </label>
+                  <label className="properties__checkbox">
+                    <input
+                      type="checkbox"
+                      checked={fanOutSkipHeader}
+                      onChange={(e) => setFanOutSkipHeader(e.target.checked)}
+                    />
+                    Skip 1st row (header) on spawned nodes
+                  </label>
+                  <button
+                    type="button"
+                    className="properties__fanout-btn"
+                    disabled={selectedColNums.length === 0}
+                    onClick={() =>
+                      fanOutColumns(
+                        nodeId,
+                        fanOutDelimiter,
+                        fanOutQuoteAware,
+                        fanOutSkipHeader && rows.length > 1,
+                        selectedColNums
+                      )
+                    }
+                    title="Automatically create and connect an Extract node for each selected column"
+                  >
+                    {selectedColNums.length === 0
+                      ? "Select at least 1 column to fan out"
+                      : selectedColNums.length === detectedCsvCols.length
+                        ? `⑃ Fan Out All ${detectedCsvCols.length} Column Extract Nodes`
+                        : `⑃ Fan Out ${selectedColNums.length} Selected Column(s)`}
+                  </button>
+                </>
+              ) : (
+                <p className="properties__note">
+                  Only 1 column detected in row 1 with delimiter <code>{fanOutDelimiter || "(empty)"}</code>. Enter another delimiter (such as <code>,</code>, <code>;</code>, <code>|</code>, or <code>\t</code>) if your rows have multiple columns.
+                </p>
+              )}
             </>
           )}
         </div>
@@ -1946,5 +2141,513 @@ function RegexWarning({ pattern }: { pattern: string }) {
     <span className="properties__regex-warning" role="alert">
       Invalid regular expression — falling back to literal match
     </span>
+  );
+}
+
+function ColumnsFields({
+  params,
+  upstreamRows,
+  set,
+}: {
+  params: OperationParams["columns"];
+  upstreamRows: string[];
+  set: (patch: Partial<OperationParams["columns"]>) => void;
+}) {
+  const [dragCol, setDragCol] = useState<number | null>(null);
+  const mode = params.mode ?? "keep";
+  const outputFormat = params.outputFormat ?? "delimited";
+  const firstRow = upstreamRows.find((r) => r.trim().length > 0) ?? "";
+  const detectedCols = firstRow
+    ? parseCsvColumns(firstRow, params.delimiter ?? ",", params.quoteAware ?? true)
+    : [];
+
+  const spec = parseColumnSpec(params.columns ?? "");
+  const positiveSpec = spec.filter((c) => c > 0);
+  const selectedSet = new Set(positiveSpec);
+
+  const orderedCols: number[] =
+    mode === "keep"
+      ? [
+          ...positiveSpec.filter((c) => c <= detectedCols.length),
+          ...detectedCols.map((_, i) => i + 1).filter((c) => !selectedSet.has(c)),
+        ]
+      : detectedCols.map((_, i) => i + 1);
+
+  function updateSpec(nextCols: number[]) {
+    set({ columns: nextCols.join(", ") });
+  }
+
+  function toggleCol(colNum: number) {
+    if (selectedSet.has(colNum)) {
+      updateSpec(positiveSpec.filter((c) => c !== colNum));
+    } else {
+      updateSpec([...positiveSpec, colNum]);
+    }
+  }
+
+  function moveCheckedCol(colNum: number, delta: -1 | 1) {
+    const idx = positiveSpec.indexOf(colNum);
+    if (idx === -1) return;
+    const targetIdx = idx + delta;
+    if (targetIdx < 0 || targetIdx >= positiveSpec.length) return;
+    const next = [...positiveSpec];
+    const [item] = next.splice(idx, 1);
+    next.splice(targetIdx, 0, item);
+    updateSpec(next);
+  }
+
+  function reorderDraggedCol(fromCol: number, toCol: number) {
+    if (fromCol === toCol) return;
+    let next = [...positiveSpec];
+    if (!next.includes(fromCol)) next.push(fromCol);
+    if (!next.includes(toCol)) next.push(toCol);
+    const fromIdx = next.indexOf(fromCol);
+    const toIdx = next.indexOf(toCol);
+    if (fromIdx === -1 || toIdx === -1) return;
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, moved);
+    updateSpec(next);
+  }
+
+  return (
+    <>
+      <div className="properties__group-label">
+        <span>Column Action</span>
+      </div>
+      <div className="properties__segment" role="group" aria-label="Columns mode">
+        <button
+          type="button"
+          className={mode === "keep" ? "is-active" : ""}
+          onClick={() => set({ mode: "keep" })}
+          title="Keep and reorder the selected columns"
+        >
+          Keep &amp; Reorder
+        </button>
+        <button
+          type="button"
+          className={mode === "drop" ? "is-active" : ""}
+          onClick={() => set({ mode: "drop" })}
+          title="Drop the selected columns and keep all remaining columns"
+        >
+          Drop Selected
+        </button>
+      </div>
+
+      <label>
+        Input delimiter
+        <input
+          value={params.delimiter ?? ","}
+          onChange={(e) => set({ delimiter: e.target.value })}
+          placeholder="e.g. , or \t or |"
+        />
+        <CharTokens value={params.delimiter ?? ","} recognizeEscapes />
+      </label>
+
+      <label className="properties__checkbox">
+        <input
+          type="checkbox"
+          checked={params.quoteAware ?? true}
+          onChange={(e) => set({ quoteAware: e.target.checked })}
+        />
+        Quote-aware CSV (ignore delimiters inside quotes)
+      </label>
+
+      {detectedCols.length > 1 && (
+        <div className="properties__csv-columns">
+          <div className="properties__col-checklist-header">
+            <span className="properties__csv-columns-title">
+              {mode === "keep"
+                ? `Check & drag to reorder (${positiveSpec.length} kept)`
+                : `Check columns to drop (${positiveSpec.length} dropped)`}
+            </span>
+            <div className="properties__col-quick-btns">
+              <button
+                type="button"
+                className="properties__col-quick-btn"
+                onClick={() => updateSpec(detectedCols.map((_, i) => i + 1))}
+              >
+                All
+              </button>
+              <button
+                type="button"
+                className="properties__col-quick-btn"
+                onClick={() => updateSpec([])}
+              >
+                None
+              </button>
+              <button
+                type="button"
+                className="properties__col-quick-btn"
+                onClick={() =>
+                  updateSpec(
+                    detectedCols
+                      .map((_, i) => i + 1)
+                      .filter((c) => !selectedSet.has(c))
+                  )
+                }
+              >
+                Invert
+              </button>
+            </div>
+          </div>
+
+          <div className="properties__col-checklist">
+            {orderedCols.map((colNum) => {
+              const rawHeader = detectedCols[colNum - 1] ?? "";
+              const checked = selectedSet.has(colNum);
+              const orderIdx = positiveSpec.indexOf(colNum);
+              return (
+                <div
+                  key={colNum}
+                  className={`properties__col-row ${checked ? "is-checked" : ""} ${
+                    dragCol === colNum ? "is-dragging" : ""
+                  }`}
+                  draggable={mode === "keep" && checked}
+                  onDragStart={() => setDragCol(colNum)}
+                  onDragOver={(e) => {
+                    if (mode === "keep" && dragCol !== null) e.preventDefault();
+                  }}
+                  onDrop={() => {
+                    if (mode === "keep" && dragCol !== null) {
+                      reorderDraggedCol(dragCol, colNum);
+                    }
+                    setDragCol(null);
+                  }}
+                  onDragEnd={() => setDragCol(null)}
+                >
+                  <label className="properties__col-row-label">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleCol(colNum)}
+                    />
+                    <span className="properties__col-idx">#{colNum}</span>
+                    <span className="properties__col-name" title={rawHeader}>
+                      {rawHeader || `(col ${colNum})`}
+                    </span>
+                  </label>
+                  {mode === "keep" && checked && (
+                    <div className="properties__col-row-actions">
+                      <span className="properties__col-order-badge" title="Output column position">
+                        → {orderIdx + 1}
+                      </span>
+                      <button
+                        type="button"
+                        className="properties__col-move-btn"
+                        disabled={orderIdx <= 0}
+                        onClick={() => moveCheckedCol(colNum, -1)}
+                        title="Move column earlier"
+                        aria-label="Move column up"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        className="properties__col-move-btn"
+                        disabled={orderIdx === -1 || orderIdx >= positiveSpec.length - 1}
+                        onClick={() => moveCheckedCol(colNum, 1)}
+                        title="Move column later"
+                        aria-label="Move column down"
+                      >
+                        ↓
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <label>
+        {mode === "keep" ? "Columns to keep (in order, 1-based)" : "Columns to drop (1-based)"}
+        <input
+          value={params.columns ?? ""}
+          onChange={(e) => set({ columns: e.target.value })}
+          placeholder="e.g. 2, 1, 3 (or -1 for last column)"
+        />
+      </label>
+
+      <div className="properties__group-label">
+        <span>Output Format</span>
+      </div>
+      <div className="properties__segment" role="group" aria-label="Output format">
+        <button
+          type="button"
+          className={outputFormat === "delimited" ? "is-active" : ""}
+          onClick={() => set({ outputFormat: "delimited" })}
+          title="Join selected columns with a custom delimiter (CSV by default)"
+        >
+          CSV / Custom
+        </button>
+        <button
+          type="button"
+          className={outputFormat === "tsv" ? "is-active" : ""}
+          onClick={() => set({ outputFormat: "tsv" })}
+          title="Join selected columns with tabs (TSV)"
+        >
+          TSV
+        </button>
+        <button
+          type="button"
+          className={outputFormat === "json" ? "is-active" : ""}
+          onClick={() => set({ outputFormat: "json", skipHeader: true })}
+          title="Convert selected columns into a JSON Array"
+        >
+          JSON
+        </button>
+      </div>
+
+      {outputFormat === "delimited" && (
+        <label>
+          Output delimiter
+          <input
+            value={params.outputDelimiter ?? ","}
+            onChange={(e) => set({ outputDelimiter: e.target.value })}
+            placeholder="e.g. , or | or \t"
+          />
+          <CharTokens value={params.outputDelimiter ?? ","} recognizeEscapes />
+        </label>
+      )}
+
+      {outputFormat !== "json" && (
+        <label>
+          Quote output fields
+          <select
+            value={params.quoteOutput ?? "auto"}
+            onChange={(e) =>
+              set({ quoteOutput: e.target.value as OperationParams["columns"]["quoteOutput"] })
+            }
+          >
+            <option value="auto">Auto (quote when delimiter/quotes present)</option>
+            <option value="always">Always wrap in &quot;...&quot;</option>
+            <option value="never">Never quote</option>
+          </select>
+        </label>
+      )}
+
+      <label className="properties__checkbox">
+        <input
+          type="checkbox"
+          checked={params.skipHeader ?? false}
+          onChange={(e) => set({ skipHeader: e.target.checked })}
+        />
+        {outputFormat === "json"
+          ? "Use 1st row as JSON object keys (CSV header)"
+          : "Skip 1st row (CSV header)"}
+      </label>
+
+      <label className="properties__checkbox">
+        <input
+          type="checkbox"
+          checked={params.trimValues ?? true}
+          onChange={(e) => set({ trimValues: e.target.checked })}
+        />
+        Trim whitespace around column values
+      </label>
+    </>
+  );
+}
+
+function discoverJsonSamplePaths(rows: string[]): string[] {
+  const nonEmpty = rows.filter((r) => r.trim().length > 0);
+  if (nonEmpty.length === 0) return [];
+  let sample: unknown = null;
+  try {
+    sample = JSON.parse(nonEmpty[0].trim());
+  } catch {
+    try {
+      sample = JSON.parse(rows.join("\n").trim());
+    } catch {
+      return [];
+    }
+  }
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  const addPath = (p: string) => {
+    if (p && !seen.has(p) && paths.length < 12) {
+      seen.add(p);
+      paths.push(p);
+    }
+  };
+
+  const target = Array.isArray(sample) && sample.length > 0 ? sample[0] : sample;
+  if (target !== null && typeof target === "object" && !Array.isArray(target)) {
+    for (const [k, v] of Object.entries(target as Record<string, unknown>)) {
+      addPath(k);
+      if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+        for (const subKey of Object.keys(v as Record<string, unknown>)) {
+          addPath(`${k}.${subKey}`);
+        }
+      } else if (Array.isArray(v) && v.length > 0) {
+        addPath(`${k}[0]`);
+        if (v[0] !== null && typeof v[0] === "object" && !Array.isArray(v[0])) {
+          for (const subKey of Object.keys(v[0] as Record<string, unknown>)) {
+            addPath(`${k}[*].${subKey}`);
+          }
+        }
+      }
+    }
+  }
+  return paths;
+}
+
+function JsonFields({
+  params,
+  upstreamRows,
+  set,
+}: {
+  params: OperationParams["json"];
+  upstreamRows: string[];
+  set: (patch: Partial<OperationParams["json"]>) => void;
+}) {
+  const mode = params.mode ?? "query";
+  const detectedPaths = mode === "query" ? discoverJsonSamplePaths(upstreamRows) : [];
+
+  return (
+    <>
+      <label>
+        Operation mode
+        <select
+          value={mode}
+          onChange={(e) =>
+            set({ mode: e.target.value as OperationParams["json"]["mode"] })
+          }
+        >
+          <option value="query">Query / Extract Path (e.g. user.email)</option>
+          <option value="format">Pretty-Print / Minify JSON</option>
+          <option value="kvToJson">Key: Value Lines → JSON Object</option>
+          <option value="rowsToJson">Rows → JSON Array</option>
+          <option value="jsonToKv">JSON → Key: Value Lines</option>
+        </select>
+      </label>
+
+      {mode === "query" && (
+        <>
+          <label>
+            Dot / bracket path
+            <input
+              value={params.path ?? ""}
+              onChange={(e) => set({ path: e.target.value })}
+              placeholder="e.g. user.email, items[0].id, or items[*].name"
+            />
+          </label>
+          {detectedPaths.length > 0 && (
+            <div className="properties__csv-columns">
+              <span className="properties__csv-columns-title">
+                Detected JSON paths (click to query):
+              </span>
+              <div className="properties__csv-pills">
+                {detectedPaths.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    className={`properties__csv-pill ${params.path === p ? "is-active" : ""}`}
+                    onClick={() => set({ path: p })}
+                    title={`Query path "${p}"`}
+                  >
+                    <code>{p}</code>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <label className="properties__checkbox">
+            <input
+              type="checkbox"
+              checked={params.flattenArrays ?? true}
+              onChange={(e) => set({ flattenArrays: e.target.checked })}
+            />
+            Expand extracted arrays into separate rows
+          </label>
+          <label className="properties__checkbox">
+            <input
+              type="checkbox"
+              checked={params.dropMissing ?? true}
+              onChange={(e) => set({ dropMissing: e.target.checked })}
+            />
+            Drop rows where path is missing or invalid JSON
+          </label>
+          {!(params.dropMissing ?? true) && (
+            <label>
+              Fallback when missing
+              <input
+                value={params.missingFallback ?? ""}
+                onChange={(e) => set({ missingFallback: e.target.value })}
+                placeholder="Optional fallback text"
+              />
+            </label>
+          )}
+          <p className="properties__note">
+            Works on both <strong>JSON Lines (JSONL)</strong> and multi-line <strong>JSON Objects / Arrays</strong>. Use <code>a.b</code> for nested fields, <code>[0]</code> or <code>[-1]</code> for array indices, or <code>[*]</code> to extract from all items.
+          </p>
+        </>
+      )}
+
+      {(mode === "format" || mode === "kvToJson" || mode === "rowsToJson") && (
+        <label>
+          JSON indentation
+          <select
+            value={String(params.indent ?? 2)}
+            onChange={(e) => set({ indent: parseInt(e.target.value, 10) || 0 })}
+          >
+            <option value="2">Pretty-print (2 spaces)</option>
+            <option value="4">Pretty-print (4 spaces)</option>
+            <option value="0">Minify (1 line)</option>
+          </select>
+        </label>
+      )}
+
+      {(mode === "kvToJson" || mode === "jsonToKv") && (
+        <label>
+          Key-value separator
+          <input
+            value={params.kvDelimiter ?? ":"}
+            onChange={(e) => set({ kvDelimiter: e.target.value })}
+            placeholder="e.g. : or = or \t"
+          />
+          <CharTokens value={params.kvDelimiter ?? ":"} recognizeEscapes />
+        </label>
+      )}
+
+      {(mode === "kvToJson" || mode === "rowsToJson") && (
+        <label className="properties__checkbox">
+          <input
+            type="checkbox"
+            checked={params.parsePrimitives ?? true}
+            onChange={(e) => set({ parsePrimitives: e.target.checked })}
+          />
+          Auto-convert numbers, booleans (true/false), and null
+        </label>
+      )}
+
+      {(mode === "format" || mode === "kvToJson") && (
+        <label className="properties__checkbox">
+          <input
+            type="checkbox"
+            checked={params.sortKeys ?? false}
+            onChange={(e) => set({ sortKeys: e.target.checked })}
+          />
+          Sort object keys alphabetically
+        </label>
+      )}
+
+      {mode === "kvToJson" && (
+        <p className="properties__note">
+          Converts <code>key{params.kvDelimiter || ":"} value</code> rows directly into a single JSON object.
+        </p>
+      )}
+      {mode === "rowsToJson" && (
+        <p className="properties__note">
+          Wraps all non-empty input rows directly into a JSON array.
+        </p>
+      )}
+      {mode === "jsonToKv" && (
+        <p className="properties__note">
+          Flattens JSON objects into <code>key{params.kvDelimiter || ":"} value</code> lines (nested keys use dot notation like <code>user.name</code>).
+        </p>
+      )}
+    </>
   );
 }

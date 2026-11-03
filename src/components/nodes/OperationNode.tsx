@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { Handle, Position, useUpdateNodeInternals, type Edge, type NodeProps } from "@xyflow/react";
 import {
   isDualInputKind,
@@ -309,6 +309,7 @@ function triangleForHandle(type: "source" | "target", position: Position): strin
 }
 
 export function OperationNode({ id, data, selected }: Props) {
+  const [copied, setCopied] = useState(false);
   const kind = data.kind;
   const canBypass = kind !== "input" && kind !== "output";
   const isBypassed = Boolean(canBypass && data.bypassed);
@@ -412,6 +413,25 @@ export function OperationNode({ id, data, selected }: Props) {
           {hasCustomLabel && <span className="op-node__kind-sub">{OPERATION_LABELS[kind]}</span>}
         </div>
         <div className="op-node__header-actions">
+          <button
+            type="button"
+            className={`op-node__copy-btn nodrag ${copied ? "is-copied" : ""}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              const state = useGraphStore.getState();
+              const rows =
+                (isDualOutputKind(kind)
+                  ? state.outputs.get(`${id}:a`)
+                  : state.outputs.get(id)) ?? [];
+              void navigator.clipboard.writeText(rows.join("\n"));
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1200);
+            }}
+            title={copied ? "Copied node output!" : "Copy node preview output"}
+            aria-label="Copy node output"
+          >
+            {copied ? "✓" : "⧉"}
+          </button>
           {canBypass && (
             <button
               type="button"

@@ -31,8 +31,11 @@ export function PreviewPanel() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
+  const pinnedNodeId = useGraphStore((s) => s.pinnedNodeId);
+  const setPinnedNode = useGraphStore((s) => s.setPinnedNode);
   const nodes = useGraphStore((s) => s.nodes);
   const edges = useGraphStore((s) => s.edges);
   const outputs = useGraphStore((s) => s.outputs);
@@ -46,22 +49,24 @@ export function PreviewPanel() {
   const setPreviewCharLimit = useGraphStore((s) => s.setPreviewCharLimit);
   const setPreviewDirection = useGraphStore((s) => s.setPreviewDirection);
 
-  const selectedNode = nodes.find((n) => n.id === selectedNodeId);
+  const activeNodeId = pinnedNodeId ?? selectedNodeId;
+  const selectedNode = nodes.find((n) => n.id === activeNodeId);
+  const isPinned = Boolean(pinnedNodeId && selectedNode);
   const isDualOutput = isDualOutputKind(selectedNode?.data.kind);
   const rows = useMemo(
     () =>
-      selectedNodeId
-        ? (isDualOutput ? outputs.get(`${selectedNodeId}:${outputSlot}`) : outputs.get(selectedNodeId)) ?? []
+      activeNodeId
+        ? (isDualOutput ? outputs.get(`${activeNodeId}:${outputSlot}`) : outputs.get(activeNodeId)) ?? []
         : [],
-    [selectedNodeId, isDualOutput, outputSlot, outputs]
+    [activeNodeId, isDualOutput, outputSlot, outputs]
   );
 
   const canDiff = Boolean(selectedNode && selectedNode.data.kind !== "input");
   const effectiveShowDiff = showDiff && canDiff;
 
   const incomingRows = useMemo(() => {
-    if (!selectedNodeId || !selectedNode || selectedNode.data.kind === "input") return [];
-    const inc = edges.filter((e) => e.target === selectedNodeId);
+    if (!activeNodeId || !selectedNode || selectedNode.data.kind === "input") return [];
+    const inc = edges.filter((e) => e.target === activeNodeId);
     if (inc.length === 0) return [];
     const primaryEdge = isDualInputKind(selectedNode.data.kind)
       ? inc.find((e) => e.targetHandle === "a") || inc[0]
@@ -72,7 +77,7 @@ export function PreviewPanel() {
       return outputs.get(`${primaryEdge.source}:b`) ?? [];
     }
     return outputs.get(primaryEdge.source) ?? [];
-  }, [selectedNodeId, selectedNode, edges, nodes, outputs]);
+  }, [activeNodeId, selectedNode, edges, nodes, outputs]);
 
   const diffResult = useMemo(() => {
     if (!effectiveShowDiff || !selectedNode) return null;
@@ -97,10 +102,12 @@ export function PreviewPanel() {
   );
   const isLazy = !isAllSelected || hasFileInput;
   const prefixLabel = previewDirection === "tail" ? "Last" : "First";
-  const dependsOnGlobal = selectedNodeId ? nodeDependsOnGlobalOp(selectedNodeId, nodes, edges) : false;
+  const dependsOnGlobal = activeNodeId ? nodeDependsOnGlobalOp(activeNodeId, nodes, edges) : false;
 
   function copyToClipboard() {
-    navigator.clipboard.writeText(rows.join("\n"));
+    void navigator.clipboard.writeText(rows.join("\n"));
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1400);
   }
 
   function download() {
@@ -135,16 +142,32 @@ export function PreviewPanel() {
       {selectedNode ? (
         <>
           <div className="preview__node-row">
-            <p className="preview__node-name">{selectedNode.data.label}</p>
-            <span
-              className={`preview__mode-badge ${isSingleLine ? "preview__mode-badge--single" : "preview__mode-badge--rows"}`}
-            >
-              {rows.length === 0 || (rows.length === 1 && rows[0] === "")
-                ? "Empty"
-                : isSingleLine
-                  ? "Single line"
-                  : "Multiline (rows)"}
-            </span>
+            <p className="preview__node-name" title={selectedNode.data.label}>
+              {selectedNode.data.label}
+            </p>
+            <div className="preview__node-badges">
+              <button
+                type="button"
+                className={`preview__pin-btn ${isPinned ? "is-active" : ""}`}
+                onClick={() => setPinnedNode(isPinned ? null : selectedNode.id)}
+                title={
+                  isPinned
+                    ? "Unpin preview (return to following the selected node)"
+                    : "Pin this node in Preview so it stays visible while editing upstream nodes"
+                }
+              >
+                {isPinned ? "📌 Pinned" : "📌 Pin"}
+              </button>
+              <span
+                className={`preview__mode-badge ${isSingleLine ? "preview__mode-badge--single" : "preview__mode-badge--rows"}`}
+              >
+                {rows.length === 0 || (rows.length === 1 && rows[0] === "")
+                  ? "Empty"
+                  : isSingleLine
+                    ? "Single line"
+                    : "Multiline (rows)"}
+              </span>
+            </div>
           </div>
 
           {isDualOutput && (
@@ -450,7 +473,7 @@ export function PreviewPanel() {
           </div>
 
           <div className="preview__actions">
-            <button onClick={copyToClipboard}>Copy Preview</button>
+            <button onClick={copyToClipboard}>{copied ? "✓ Copied!" : "Copy Preview"}</button>
             <button onClick={download}>Download Preview</button>
           </div>
         </>

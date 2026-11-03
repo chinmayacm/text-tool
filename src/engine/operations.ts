@@ -189,12 +189,19 @@ export function runOperation(
       break;
     }
     case "join": {
-      const { delimiter, skipEmpty } = data.params as NodeData<"join">["params"];
+      const { delimiter, skipEmpty, mode, chunkSize } = data.params as NodeData<"join">["params"];
       const rowsToJoin = skipEmpty ? input.filter((r) => r !== "") : input;
+      const effDelim = decodeEscapes(delimiter ?? "");
       if (rowsToJoin.length === 0) {
         result = [];
+      } else if (mode === "chunk") {
+        const size = Math.max(1, chunkSize ?? 2);
+        result = [];
+        for (let i = 0; i < rowsToJoin.length; i += size) {
+          result.push(rowsToJoin.slice(i, i + size).join(effDelim));
+        }
       } else {
-        result = [rowsToJoin.join(decodeEscapes(delimiter ?? ""))];
+        result = [rowsToJoin.join(effDelim)];
       }
       break;
     }
@@ -349,6 +356,14 @@ export function runOperation(
     }
     case "encode": {
       result = runEncodeOperation(data.params as NodeData<"encode">["params"], input);
+      break;
+    }
+    case "json": {
+      result = runJsonOperation(data.params as NodeData<"json">["params"], input);
+      break;
+    }
+    case "columns": {
+      result = runColumnsOperation(data.params as NodeData<"columns">["params"], input);
       break;
     }
     case "stats": {
@@ -997,6 +1012,343 @@ export function runStatsOperation(params: NodeData<"stats">["params"], input: Ro
   }
 
   return out;
+}
+
+function parsePrimitiveValue(raw: string, parsePrimitives: boolean): unknown {
+  if (!parsePrimitives) return raw;
+  const trimmed = raw.trim();
+  if (trimmed === "true") return true;
+  if (trimmed === "false") return false;
+  if (trimmed === "null") return null;
+  if (trimmed !== "" && /^-?\d+(?:\.\d+)?$/.test(trimmed)) {
+    const num = Number(trimmed);
+    if (Number.isFinite(num)) return num;
+  }
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]")) ||
+    (trimmed.startsWith('"') && trimmed.endsWith('"'))
+  ) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      // fall through
+    }
+  }
+  return raw;
+}
+
+function sortJsonKeysDeep(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortJsonKeysDeep);
+  }
+  if (value !== null && typeof value === "object") {
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      sorted[key] = sortJsonKeysDeep((value as Record<string, unknown>)[key]);
+    }
+    return sorted;
+  }
+  return value;
+}
+
+function tokenizeJsonPath(rawPath: string): string[] {
+  const cleaned = rawPath.trim().replace(/^\$\.?/, "").replace(/^\.+/, "");
+  if (!cleaned) return [];
+  const tokens: string[] = [];
+  const re = /([^.[\]]+)|\[(\*|-?\d+|"[^"]*"|'[^']*')\]/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(cleaned)) !== null) {
+    const token = match[1] ?? match[2] ?? "";
+    tokens.push(token.replace(/^["']|["']$/g, ""));
+  }
+  return tokens;
+}
+
+function evaluateJsonPath(root: unknown, tokens: string[]): unknown[] {
+  let current: unknown[] = [root];
+  for (const token of tokens) {
+    const next: unknown[] = [];
+    for (const item of current) {
+      if (item === null || item === undefined) continue;
+      if (token === "*") {
+        if (Array.isArray(item)) next.push(...item);
+        else if (typeof item === "object") next.push(...Object.values(item as Record<string, unknown>));
+        continue;
+      }
+      if (Array.isArray(item)) {
+        if (/^-?\d+$/.test(token)) {
+          const idx = parseInt(token, 10);
+          const resolved = idx < 0 ? item.length + idx : idx;
+          if (resolved >= 0 && resolved < item.length) {
+            next.push(item[resolved]);
+          }
+        } else {
+          for (const elem of item) {
+            if (elem !== null && typeof elem === "object" && token in (elem as Record<string, unknown>)) {
+              next.push((elem as Record<string, unknown>)[token]);
+            }
+          }
+        }
+        continue;
+      }
+      if (typeof item === "object" && token in (item as Record<string, unknown>)) {
+        next.push((item as Record<string, unknown>)[token]);
+      }
+    }
+    current = next;
+    if (current.length === 0) break;
+  }
+  return current;
+}
+
+function formatJsonValueToRows(val: unknown, flattenArrays: boolean): Rows {
+  if (val === undefined) return [];
+  if (val === null) return ["null"];
+  if (typeof val === "string") return [val];
+  if (typeof val === "number" || typeof val === "boolean") return [String(val)];
+  if (Array.isArray(val) && flattenArrays) {
+    return val.flatMap((item) => formatJsonValueToRows(item, false));
+  }
+  return [JSON.stringify(val)];
+}
+
+function parseJsonInputEntities(input: Rows): { entities: Array<{ ok: boolean; value: unknown }>; isDocument: boolean } {
+  const nonEmpty = input.filter((r) => r.trim().length > 0);
+  if (nonEmpty.length === 0) return { entities: [], isDocument: false };
+
+  const perRow = nonEmpty.map((row) => {
+    try {
+      return { ok: true, value: JSON.parse(row.trim()) };
+    } catch {
+      return { ok: false, value: null };
+    }
+  });
+  if (perRow.every((r) => r.ok)) {
+    return { entities: perRow, isDocument: false };
+  }
+
+  const joined = input.join("\n").trim();
+  try {
+    const doc = JSON.parse(joined);
+    return { entities: [{ ok: true, value: doc }], isDocument: true };
+  } catch {
+    return { entities: perRow, isDocument: false };
+  }
+}
+
+function flattenJsonToKvRows(value: unknown, prefix: string, sep: string, out: Rows): void {
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const entries = Object.entries(value as Record<string, unknown>);
+    for (const [k, v] of entries) {
+      const nextKey = prefix ? `${prefix}.${k}` : k;
+      if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+        flattenJsonToKvRows(v, nextKey, sep, out);
+      } else if (Array.isArray(v)) {
+        out.push(`${nextKey}${sep}${JSON.stringify(v)}`);
+      } else {
+        out.push(`${nextKey}${sep}${v === null ? "null" : String(v)}`);
+      }
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      const item = value[i];
+      if (item !== null && typeof item === "object" && !Array.isArray(item)) {
+        flattenJsonToKvRows(item, prefix, sep, out);
+      } else {
+        const key = prefix ? `${prefix}[${i}]` : `[${i}]`;
+        out.push(`${key}${sep}${item === null ? "null" : typeof item === "object" ? JSON.stringify(item) : String(item)}`);
+      }
+    }
+  }
+}
+
+export function runJsonOperation(params: NodeData<"json">["params"], input: Rows): Rows {
+  const mode = params.mode ?? "query";
+  const indent = Math.max(0, params.indent ?? 2);
+  const sortKeys = params.sortKeys ?? false;
+  const kvDelim = decodeEscapes(params.kvDelimiter || ":");
+  const parsePrimitives = params.parsePrimitives ?? true;
+
+  if (mode === "kvToJson") {
+    const obj: Record<string, unknown> = {};
+    for (const row of input) {
+      const trimmed = row.trim();
+      if (!trimmed) continue;
+      const idx = kvDelim ? row.indexOf(kvDelim) : -1;
+      if (idx === -1) continue;
+      const key = row.slice(0, idx).trim();
+      if (!key) continue;
+      const rawVal = row.slice(idx + kvDelim.length).trim();
+      obj[key] = parsePrimitiveValue(rawVal, parsePrimitives);
+    }
+    const finalObj = sortKeys ? sortJsonKeysDeep(obj) : obj;
+    const jsonStr = indent > 0 ? JSON.stringify(finalObj, null, indent) : JSON.stringify(finalObj);
+    return jsonStr.split("\n");
+  }
+
+  if (mode === "rowsToJson") {
+    const arr = input
+      .filter((r) => r.trim().length > 0)
+      .map((r) => parsePrimitiveValue(r, parsePrimitives));
+    const finalArr = sortKeys ? sortJsonKeysDeep(arr) : arr;
+    const jsonStr = indent > 0 ? JSON.stringify(finalArr, null, indent) : JSON.stringify(finalArr);
+    return jsonStr.split("\n");
+  }
+
+  const { entities, isDocument } = parseJsonInputEntities(input);
+  if (entities.length === 0) return [];
+
+  if (mode === "format") {
+    const out: Rows = [];
+    for (const item of entities) {
+      if (!item.ok) continue;
+      const target = sortKeys ? sortJsonKeysDeep(item.value) : item.value;
+      const formatted = indent > 0 ? JSON.stringify(target, null, indent) : JSON.stringify(target);
+      if (indent > 0 && isDocument) {
+        out.push(...formatted.split("\n"));
+      } else if (indent > 0) {
+        out.push(...formatted.split("\n"));
+      } else {
+        out.push(formatted);
+      }
+    }
+    return out;
+  }
+
+  if (mode === "jsonToKv") {
+    const out: Rows = [];
+    const sep = kvDelim.endsWith(" ") ? kvDelim : `${kvDelim} `;
+    for (const item of entities) {
+      if (!item.ok) continue;
+      flattenJsonToKvRows(item.value, "", sep, out);
+    }
+    return out;
+  }
+
+  // mode === "query"
+  const tokens = tokenizeJsonPath(params.path ?? "");
+  const flattenArrays = params.flattenArrays ?? true;
+  const dropMissing = params.dropMissing ?? true;
+  const fallback = params.missingFallback ?? "";
+  const out: Rows = [];
+
+  for (const item of entities) {
+    if (!item.ok) {
+      if (!dropMissing) out.push(fallback);
+      continue;
+    }
+    const matches = tokens.length === 0 ? [item.value] : evaluateJsonPath(item.value, tokens);
+    if (matches.length === 0) {
+      if (!dropMissing) out.push(fallback);
+      continue;
+    }
+    for (const val of matches) {
+      const rows = formatJsonValueToRows(val, flattenArrays);
+      if (rows.length > 0) {
+        out.push(...rows);
+      } else if (!dropMissing) {
+        out.push(fallback);
+      }
+    }
+  }
+  return out;
+}
+
+export function parseColumnSpec(spec: string): number[] {
+  return spec
+    .split(/[\s,;]+/)
+    .map((s) => parseInt(s.trim(), 10))
+    .filter((n) => Number.isFinite(n) && n !== 0);
+}
+
+function formatDelimitedCell(
+  cell: string,
+  outDelim: string,
+  quoteMode: "auto" | "always" | "never"
+): string {
+  if (quoteMode === "never") return cell;
+  if (quoteMode === "always") {
+    return `"${cell.replace(/"/g, '""')}"`;
+  }
+  if (
+    (outDelim && cell.includes(outDelim)) ||
+    cell.includes('"') ||
+    cell.includes("\n") ||
+    cell.includes("\r")
+  ) {
+    return `"${cell.replace(/"/g, '""')}"`;
+  }
+  return cell;
+}
+
+export function runColumnsOperation(params: NodeData<"columns">["params"], input: Rows): Rows {
+  if (input.length === 0) return [];
+  const delim = decodeEscapes(params.delimiter || ",");
+  const quoteAware = params.quoteAware ?? true;
+  const trimValues = params.trimValues ?? true;
+  const mode = params.mode ?? "keep";
+  const spec = parseColumnSpec(params.columns ?? "");
+  const outputFormat = params.outputFormat ?? "delimited";
+  const outDelim = outputFormat === "tsv" ? "\t" : decodeEscapes(params.outputDelimiter || ",");
+  const quoteMode = params.quoteOutput ?? "auto";
+  const skipHeader = params.skipHeader ?? false;
+
+  const splitRow = (row: string): string[] => {
+    const raw = delim
+      ? quoteAware
+        ? splitQuoteAware(row, delim, true)
+        : row.split(delim)
+      : [row];
+    return trimValues ? raw.map((c) => c.trim()) : raw;
+  };
+
+  const selectCells = (parts: string[]): string[] => {
+    if (spec.length === 0) {
+      return mode === "drop" ? parts : parts;
+    }
+    if (mode === "keep") {
+      return spec.map((col) => {
+        const idx = col < 0 ? parts.length + col : col - 1;
+        return idx >= 0 && idx < parts.length ? parts[idx] : "";
+      });
+    }
+    const dropSet = new Set(
+      spec.map((col) => (col < 0 ? parts.length + col : col - 1))
+    );
+    return parts.filter((_, idx) => !dropSet.has(idx));
+  };
+
+  if (outputFormat === "json") {
+    const nonEmpty = input.filter((r) => r.trim().length > 0);
+    if (nonEmpty.length === 0) return [];
+    if (skipHeader) {
+      const rawHeaders = selectCells(splitRow(nonEmpty[0]));
+      const headers = rawHeaders.map((h, i) => h.trim() || `col${i + 1}`);
+      const objects = nonEmpty.slice(1).map((row) => {
+        const cells = selectCells(splitRow(row));
+        const obj: Record<string, unknown> = {};
+        headers.forEach((key, idx) => {
+          obj[key] = parsePrimitiveValue(cells[idx] ?? "", true);
+        });
+        return obj;
+      });
+      return JSON.stringify(objects, null, 2).split("\n");
+    }
+    const rowsArray = nonEmpty.map((row) =>
+      selectCells(splitRow(row)).map((c) => parsePrimitiveValue(c, true))
+    );
+    return JSON.stringify(rowsArray, null, 2).split("\n");
+  }
+
+  const rowsToProcess = skipHeader ? input.slice(1) : input;
+  return rowsToProcess.map((row) => {
+    if (row.trim() === "") return "";
+    const selected = selectCells(splitRow(row));
+    return selected.map((c) => formatDelimitedCell(c, outDelim, quoteMode)).join(outDelim);
+  });
 }
 
 

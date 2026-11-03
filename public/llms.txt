@@ -8,19 +8,19 @@
 ## Key Capabilities
 
 - **Visual Node-Graph Pipeline**: Drag and connect operations on an interactive canvas, splice nodes onto existing edges, use magnetic auto-connect, or press `/` (`Ctrl+K` / double-click canvas) to open the Quick-Add command palette and auto-connect nodes.
-- **Workflow & Inspection Tools**: Auto-arrange messy graphs into clean left-to-right columns (`↔ Horizontal`) or top-to-bottom rows (`↕ Vertical`) with `✦ Tidy Graph`, temporarily mute/bypass any intermediate node (`⚡` / `⊘` or `B`/`M`), add custom node titles and subtitle notes, and inspect any node with a Before/After Diff (`± Diff`), line numbers (`#`), invisible whitespace markers (`·→`), and inline search (`Find`).
+- **Workflow & Inspection Tools**: Undo/Redo graph history (`Ctrl+Z` / `Ctrl+Y` or `↶ Undo` / `↷ Redo`), pin any node in Preview (`📌 Pin`) while editing upstream nodes, 1-click copy output (`⧉`) on any canvas node, auto-arrange messy graphs into clean left-to-right columns (`↔ Horizontal`) or top-to-bottom rows (`↕ Vertical`) with `✦ Tidy Graph`, temporarily mute/bypass any intermediate node (`⚡` / `⊘` or `B`/`M`), add custom node titles and subtitle notes, and inspect any node with a Before/After Diff (`± Diff`), line numbers (`#`), invisible whitespace markers (`·→`), and inline search (`Find`).
 - **Lazy Live Previews**: Inspect any intermediate node's output in real time using Head (first N) or Tail (last N) row/character slicing without loading multi-megabyte files into memory until "Process Now" is clicked.
 - **100% Client-Side Privacy**: No backend server or cloud uploads. Projects and attached CSV/TXT files autosave locally in IndexedDB and can be exported/imported as `.texttool` archives.
 
 ## Available Nodes
 
 ### I/O
-- **Input**: Load pasted text or `.txt`/`.csv` files and split by newline, custom delimiter (`\n`, `\t`, `,`), or keep as a single value.
+- **Input**: Load pasted text or `.txt`/`.csv` files and split by newline, custom delimiter (`\n`, `\t`, `,`), or keep as a single value. Includes header-aware CSV column detection and 1-click column fan-out.
 - **Output**: Evaluate the full graph across complete files ("Process Now"), then copy or download the result.
 
 ### Structure & Combine
 - **Split**: Break each row into multiple vertical rows by literal delimiter, Quote-aware CSV mode (respecting quoted fields), or regular expression (with built-in Regex Presets).
-- **Join**: Combine all rows into a single string with a custom delimiter (optionally skipping empty rows).
+- **Join**: Combine all rows into a single string (`All rows (1 line)`) or group every N consecutive rows (`Every N rows`) with a custom delimiter (optionally skipping empty rows).
 - **Merge (Dual-Input A & B)**: Pair and join rows from two inputs side-by-side (or broadcast a 1-row input across all rows of the other input).
 - **Unmerge (Dual-Output A & B)**: Split each row horizontally at the first or last occurrence of a delimiter into two parallel outputs (`Output A` before delimiter, `Output B` after delimiter).
 - **Compare (Dual-Input A & B)**: Set operations between two lists: Difference (`A − B`), Intersection (`A ∩ B`), Symmetric Difference (`A Δ B`), and Union (`A ∪ B`).
@@ -38,6 +38,8 @@
 - **Unique**: Deduplicate rows in original order, keep only duplicates or singles, and optionally prepend occurrence counts (`3 × item`).
 - **Number**: Prefix or suffix rows with sequential numbers (`1. `, `001: `) with custom start, step, and zero-padding.
 - **Extract**: Pull out a specific column index (`1`, `-1`, with optional Quote-aware CSV mode), substring between two delimiters (`[` … `]`), or regex capture group (with Regex Presets).
+- **Columns**: Keep & reorder or drop CSV/delimited columns via an interactive detected-column checklist and output as CSV/delimited text, TSV, or a JSON Array.
+- **JSON / Key-Value**: Query nested JSON fields by dot/bracket path (`user.email`, `items[0].id`, `items[*].name`), pretty-print or minify JSON, or convert between `key: value` lines / rows and JSON objects/arrays.
 - **Pad / Cut**: Pad rows to a fixed character width (start, end, center) or truncate with an ellipsis.
 - **Template**: Format each row into SQL, JSON, or custom text using `{row}`, `{i}` (1-based index), `{i0}` (0-based index), and `{col1}`, `{col2}`… column placeholders (with optional Quote-aware CSV mode).
 - **Encode / Decode**: Encode or decode rows using Base64, URL (`%20`), HTML Entities (`&amp;`), JSON String Escape/Unescape, or Hex.

@@ -55,7 +55,11 @@ Split each input row into multiple vertical rows. Enter a delimiter such as `,`,
 
 ### Join
 
-Combine all input rows into one row, placing the configured **Delimiter** between them (supports `\n` and `\t` escapes). For example, joining `apple`, `banana`, and `carrot` with `, ` produces `apple, banana, carrot`. Enable **Skip empty rows before joining** to ignore blank rows so double delimiters do not appear.
+Combine input rows using the configured **Delimiter** (supports `\n` and `\t` escapes):
+
+- **All rows (1 line)**: joins all input rows into a single string. For example, joining `apple`, `banana`, and `carrot` with `, ` produces `apple, banana, carrot`.
+- **Every N rows**: groups every $N$ consecutive rows into one joined row while keeping the output as multiple rows—ideal for turning multi-line records (like 3-line address blocks or key/value pairs) into single rows.
+- Enable **Skip empty rows before joining** to ignore blank rows so double delimiters do not appear.
 
 ### Merge
 
@@ -164,6 +168,29 @@ Pull out a specific part of each row using one of three modes:
 - **Regex**: extract a regular expression match (or choose a pattern from **`Presets ▾`**) or specific **Capture group** (`0` = full match, `1+` = group).
 - Rows without a match can either be dropped (**Drop rows without a match**) or replaced with **Fallback when not found**.
 
+### Columns
+
+Select, reorder, or drop CSV/delimited columns in a single node—and format the result as CSV/delimited text, TSV, or a JSON Array:
+
+- **Column Action**:
+  - **Keep & Reorder**: check the columns you want to keep and drag (or use the `↑`/`↓` buttons) to reorder them, or type 1-based column numbers (`2, 3, 1` or `-1` for the last column).
+  - **Drop Selected**: check or list the columns to remove while keeping all remaining columns in order.
+- **Interactive Detected Columns Checklist**: when connected to a multi-column source, automatically detects column headers from the first row (`#1 id`, `#2 name`, `#3 email`…) with **`All`**, **`None`**, and **`Invert`** quick actions.
+- **Output Format (`CSV / Custom`, `TSV`, `JSON`)**:
+  - **CSV / Custom**: join selected columns with a custom delimiter (`,` by default) and configurable field quoting (**Auto**, **Always**, or **Never**).
+  - **TSV**: join selected columns with tabs (`\t`).
+  - **JSON**: convert selected columns directly into a formatted JSON Array of objects (using the first row as keys when **Use 1st row as JSON object keys** is checked, with automatic number/boolean/null type conversion) or an array of arrays.
+
+### JSON / Key-Value
+
+Parse, query, format, and convert between JSON and row/key-value text:
+
+- **Query / Extract Path**: extract nested values from **JSON Lines (JSONL)** or multi-line **JSON Objects / Arrays** using dot and bracket notation (e.g. `user.email`, `items[0].id`, `items[-1].id`, or `items[*].name`). When connected to a JSON input, clickable **Detected JSON paths** pills let you select paths in 1 click. Includes toggles to **Expand extracted arrays into separate rows** and **Drop rows where path is missing**.
+- **Pretty-Print / Minify JSON**: format JSON with 2-space or 4-space indentation, or minify each JSON entity onto a single line, with optional alphabetical key sorting (**Sort object keys alphabetically**).
+- **Key: Value Lines → JSON Object**: convert `key: value` or `key=value` lines directly into a JSON object, with automatic primitive type inference (`true`/`false`, `null`, numbers).
+- **Rows → JSON Array**: wrap all non-empty input rows into a JSON array.
+- **JSON → Key: Value Lines**: flatten JSON objects into `key: value` lines using dot notation (`user.email: alice@acme.io`).
+
 ### Pad / Cut
 
 Pad rows to a fixed character width (**Pad end**, **Pad start**, or **Pad both** using a **Pad character**) or **Truncate to max width** with an optional **Ellipsis suffix** (`…`).
@@ -216,24 +243,26 @@ Output marks the end of a graph and provides full processing and export controls
 
 Select any node to view its output in the Preview panel:
 
-- **Mode badge**: indicates whether the selected node's output is **Multiline (rows)**, **Single line**, or **Empty**.
-- **Output A / Output B toggle**: when an **Unmerge** node is selected, switch between inspecting **Output A** and **Output B**.
+- **Pin preview (`📌 Pin` / `📌 Pinned`)**: lock any node (such as the final **Output** node) in the Preview panel so you can click and edit upstream nodes in Properties while watching the pinned node's output update live.
+- **Mode badge**: indicates whether the previewed node's output is **Multiline (rows)**, **Single line**, or **Empty**.
+- **Output A / Output B toggle**: when an **Unmerge** or **Partition** node is previewed, switch between inspecting **Output A** and **Output B**.
 - **Head / Tail & Limit controls**: choose **Head** (first items) or **Tail** (last items), and pick a row limit (`5`, `10`, `50`, `Custom`, or `All rows`) for multiline results or a character limit (`100`, `500`, `1000`, `Custom`, or `All chars`) for single-line results. Both **Head** and **Tail** slices are evaluated lazily from the start or end of the input.
 - **Lazy vs. Full status badge**: the header badge shows **`Lazy`** when a row/character limit is active, switches to **`Full`** when `All` is selected on pasted text, and shows **`Lazy (Cap)`** when `All` is selected with a file input (since live file previews stay capped until **Process Now** is clicked).
 - **Inspection toolbar (`± Diff`, `#`, `·→`, `Find`)**:
-  - **`± Diff`**: compare the selected node's incoming input vs. its output, showing a summary of modified (`~`), added (`+`), removed (`−`), and unchanged (`=`) rows alongside inline character-level highlights.
+  - **`± Diff`**: compare the previewed node's incoming input vs. its output, showing a summary of modified (`~`), added (`+`), removed (`−`), and unchanged (`=`) rows alongside inline character-level highlights.
   - **`#`**: toggle a line-number gutter (`1, 2, 3…`).
   - **`·→`**: visualize invisible spaces (`·`) and tabs (`→`) inside the preview without affecting copied or downloaded text.
   - **`Find`**: open an inline search bar with match counter and `Aa` case-sensitivity toggle to highlight matching substrings across the preview.
 - **Lazy preview notice**: when inspecting a **Sort**, **Unique**, **Compare**, or **Stats** node (or any node downstream of them) while preview is in **Lazy** mode, a notice banner reminds you that only the sampled preview slice is evaluated and that the final full-dataset result may differ until you select **All** or click **Process Now**.
 
-The Preview panel can copy or download the currently displayed preview without running full processing.
+The Preview panel (or the **`⧉` Copy** button in any canvas node's header) can copy or download the currently displayed preview output in one click without running full processing.
 
 ## Canvas Controls
 
-- **Add a node:** drag it from the left palette onto the canvas, or use **Quick Add** (`/` or `Ctrl+K` / `Cmd+K`, the **`＋ Quick Add`** toolbar button, or **double-clicking empty canvas**) to search for a node by name and automatically connect it to the currently selected node.
+- **Add a node:** drag it from the left palette (which includes a **Filter nodes & examples…** search box) onto the canvas, or use **Quick Add** (`/` or `Ctrl+K` / `Cmd+K`, the **`＋ Quick Add`** toolbar button, or **double-clicking empty canvas**) to search for a node by name and automatically connect it to the currently selected node.
+- **Undo & Redo (`↶ Undo`, `↷ Redo`):** click **`↶ Undo`** or **`↷ Redo`** in the top-left canvas toolbar, or press **`Ctrl+Z` / `Cmd+Z`** to undo and **`Ctrl+Y` / `Ctrl+Shift+Z` / `Cmd+Shift+Z`** to redo graph edits, node parameter changes, deletions, and layout rearrangements.
 - **Tidy Graph & Layout Orientation (`✦ Tidy Graph`, `↔ Horizontal`, `↕ Vertical`):** click **`✦ Tidy Graph`** in the top-left canvas toolbar to automatically arrange all nodes into clean topological columns or rows and fit the view. Use the **`↔ Horizontal`** (Left → Right) and **`↕ Vertical`** (Top → Bottom) toggle buttons to switch the graph layout direction; newly added nodes, unconnected handle defaults, and loaded examples automatically follow the active orientation.
-- **Bypass / Mute a node (`⚡` / `⊘`):** click the `⚡` button in any intermediate node's header (or in Properties, or press `B` or `M` while a node is selected) to temporarily bypass that step and pass incoming data straight through untouched.
+- **Bypass / Mute (`⚡` / `⊘`) & 1-Click Copy (`⧉`):** click the `⚡` button in any intermediate node's header (or in Properties, or press `B` or `M` while a node is selected) to temporarily bypass that step and pass incoming data straight through untouched. Click **`⧉`** on any node header to copy its preview output directly to your clipboard.
 - **Connect nodes & smart handles:** drag from a node's output handle (outward triangle `▸`/`▾`/`◂`/`▴`) to another node's input handle (inward triangle). Single-input nodes accept one incoming connection at a time—connecting a new node automatically replaces the previous incoming connection. Handles automatically snap to the closest side of the node (**Top**, **Right**, **Bottom**, or **Left**) based on the angle to connected neighbors, and space themselves along the edge so multiple connections on the same side never overlap.
 - **Magnetic connect:** slowly drag an existing node over another node, or drag a palette node over one. Wait for the target to glow, then release to connect. For existing nodes, a quick yank cancels the magnetic connection. Left feeds right in horizontal layouts, and top feeds bottom in vertical layouts.
 - **Insert into an edge:** drop a palette node over a connection line to splice it into that connection. To splice an existing node, hold Ctrl (Windows/Linux) or Cmd (macOS) while dropping it on an edge.

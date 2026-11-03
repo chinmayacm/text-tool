@@ -23,6 +23,8 @@ export type OperationKind =
   | "pad"
   | "template"
   | "encode"
+  | "json"
+  | "columns"
   | "stats"
   | "output";
 
@@ -109,7 +111,12 @@ export interface OperationParams {
   };
   split: { delimiter: string; useRegex: boolean; quoteAware?: boolean };
   enclose: { prefix: string; suffix: string; skipEmpty?: boolean };
-  join: { delimiter: string; skipEmpty?: boolean };
+  join: {
+    delimiter: string;
+    skipEmpty?: boolean;
+    mode?: "all" | "chunk";
+    chunkSize?: number;
+  };
   merge: { delimiter: string; missingFallback: string };
   unmerge: { delimiter: string; occurrence: "first" | "last"; missingFallback: string };
   compare: {
@@ -202,6 +209,28 @@ export interface OperationParams {
     format: "base64" | "url" | "html" | "json" | "hex";
     direction: "encode" | "decode";
   };
+  json: {
+    mode: "query" | "format" | "kvToJson" | "rowsToJson" | "jsonToKv";
+    path: string;
+    flattenArrays: boolean;
+    dropMissing: boolean;
+    missingFallback: string;
+    indent: number;
+    sortKeys: boolean;
+    kvDelimiter: string;
+    parsePrimitives: boolean;
+  };
+  columns: {
+    mode: "keep" | "drop";
+    columns: string;
+    delimiter: string;
+    quoteAware: boolean;
+    trimValues: boolean;
+    skipHeader: boolean;
+    outputFormat: "delimited" | "tsv" | "json";
+    outputDelimiter: string;
+    quoteOutput: "auto" | "always" | "never";
+  };
   stats: {
     mode: "all" | "text" | "numeric" | "frequency" | "custom";
     metrics?: StatMetricKey[];
@@ -242,6 +271,8 @@ export const OPERATION_LABELS: Record<OperationKind, string> = {
   pad: "Pad / Cut",
   template: "Template",
   encode: "Encode / Decode",
+  json: "JSON / Key-Value",
+  columns: "Columns",
   stats: "Stats",
   output: "Output",
 };
@@ -250,7 +281,7 @@ export const OPERATION_DESCRIPTIONS: Record<OperationKind, string> = {
   input: "Load pasted text or a CSV/TXT file as rows.",
   split: "Break each row into multiple rows at a delimiter (with optional quote-aware CSV mode).",
   enclose: "Wrap every row with a prefix and suffix.",
-  join: "Combine all rows into a single row with a delimiter.",
+  join: "Combine all rows into a single row—or group every N rows—with a delimiter.",
   merge: "Pair and join rows from two inputs side-by-side.",
   unmerge: "Split each row at the first or last delimiter into two parallel outputs (A and B).",
   compare: "Compare two inputs (A − B difference, A ∩ B intersection, A Δ B symmetric diff, or A ∪ B union).",
@@ -268,6 +299,8 @@ export const OPERATION_DESCRIPTIONS: Record<OperationKind, string> = {
   pad: "Pad rows to a fixed character width or truncate long rows with an optional ellipsis.",
   template: "Format each row using {row}, {i}, {i0}, and {col1}, {col2}… placeholders.",
   encode: "Encode or decode every row using Base64, URL (%20), HTML Entities (&amp;), JSON String Escape, or Hex.",
+  json: "Query JSON fields by dot-path (e.g. user.email or items[0].id), pretty-print/minify JSON, or convert between Key-Value/rows and JSON.",
+  columns: "Select, reorder, or drop CSV/delimited columns and output as CSV, TSV, or JSON.",
   stats: "Summarize rows using All (text + math), Text & Rows, Numeric aggregations, or a sorted Frequency Table.",
   output: "Process the full graph and copy or download the result.",
 };
@@ -340,6 +373,28 @@ export function defaultParams<K extends OperationKind>(kind: K): OperationParams
       format: "base64",
       direction: "encode",
     },
+    json: {
+      mode: "query",
+      path: "id",
+      flattenArrays: true,
+      dropMissing: true,
+      missingFallback: "",
+      indent: 2,
+      sortKeys: false,
+      kvDelimiter: ":",
+      parsePrimitives: true,
+    },
+    columns: {
+      mode: "keep",
+      columns: "1, 2",
+      delimiter: ",",
+      quoteAware: true,
+      trimValues: true,
+      skipHeader: false,
+      outputFormat: "delimited",
+      outputDelimiter: ",",
+      quoteOutput: "auto",
+    },
     stats: {
       mode: "all",
       metrics: [...ALL_STAT_METRICS],
@@ -371,6 +426,9 @@ export function summarizeNode(data: NodeData<OperationKind>): string {
     }
     case "join": {
       const p = data.params as OperationParams["join"];
+      if (p.mode === "chunk") {
+        return `Every ${Math.max(1, p.chunkSize ?? 2)} rows · "${p.delimiter}"`;
+      }
       return `Delimiter: "${p.delimiter}"`;
     }
     case "merge": {
@@ -473,6 +531,25 @@ export function summarizeNode(data: NodeData<OperationKind>): string {
         hex: "Hex",
       };
       return `${p.direction === "decode" ? "Decode" : "Encode"} · ${fmtLabels[p.format]}`;
+    }
+    case "json": {
+      const p = data.params as OperationParams["json"];
+      if (p.mode === "query") return p.path ? `Query: ${p.path}` : "Query JSON";
+      if (p.mode === "format") return p.indent === 0 ? "Minify JSON" : `Pretty JSON (${p.indent} spaces)`;
+      if (p.mode === "kvToJson") return `Key-Value (${p.kvDelimiter || ":"}) → JSON`;
+      if (p.mode === "rowsToJson") return "Rows → JSON Array";
+      return `JSON → Key-Value (${p.kvDelimiter || ":"})`;
+    }
+    case "columns": {
+      const p = data.params as OperationParams["columns"];
+      const cols = p.columns.trim() || "all";
+      const outFmt =
+        p.outputFormat === "json"
+          ? "JSON"
+          : p.outputFormat === "tsv"
+            ? "TSV"
+            : `"${p.outputDelimiter || ","}"`;
+      return `${p.mode === "drop" ? "Drop" : "Keep"} [${cols}] → ${outFmt}`;
     }
     case "stats": {
       const p = data.params as OperationParams["stats"];

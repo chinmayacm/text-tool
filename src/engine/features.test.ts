@@ -17,7 +17,12 @@ import {
 } from "./operations.ts";
 import { readPreviewText, splitInputText } from "./textSource.ts";
 import { planMagneticConnection } from "../store/magnet.ts";
-import { bridgeDeletedNodes, layoutGraphTopologically, replaceTargetInputEdge } from "../store/useGraphStore.ts";
+import {
+  bridgeDeletedNodes,
+  layoutGraphTopologically,
+  replaceTargetInputEdge,
+  useGraphStore,
+} from "../store/useGraphStore.ts";
 import { GRAPH_TEMPLATES } from "../templates.ts";
 
 test("custom input split keeps the delimiter and decodes escapes", () => {
@@ -721,6 +726,237 @@ test("All GRAPH_TEMPLATES evaluate cleanly with non-empty outputs", () => {
     }
   }
 });
+
+test("Join supports both all-rows (1 line) and chunk (every N rows) modes", () => {
+  const rows = ["a", "b", "c", "d", "e"];
+  const allResult = runOperation(
+    {
+      kind: "join",
+      label: "Join",
+      params: { delimiter: ", ", mode: "all", chunkSize: 2 },
+    },
+    rows,
+  );
+  assert.deepEqual(allResult, ["a, b, c, d, e"]);
+
+  const chunkResult = runOperation(
+    {
+      kind: "join",
+      label: "Join",
+      params: { delimiter: " | ", mode: "chunk", chunkSize: 2 },
+    },
+    rows,
+  );
+  assert.deepEqual(chunkResult, ["a | b", "c | d", "e"]);
+});
+
+test("useGraphStore supports undo, redo, and pinned preview node", () => {
+  const store = useGraphStore.getState();
+  store.resetProject();
+  const initialCount = useGraphStore.getState().nodes.length;
+  assert.equal(useGraphStore.getState().past.length, 0);
+  assert.equal(useGraphStore.getState().future.length, 0);
+
+  const addedId = useGraphStore.getState().addNode("trim", { x: 250, y: 180 });
+  assert.equal(useGraphStore.getState().nodes.length, initialCount + 1);
+  assert.equal(useGraphStore.getState().past.length, 1);
+
+  useGraphStore.getState().setPinnedNode(addedId);
+  assert.equal(useGraphStore.getState().pinnedNodeId, addedId);
+
+  const undone = useGraphStore.getState().undo();
+  assert.equal(undone, true);
+  assert.equal(useGraphStore.getState().nodes.length, initialCount);
+  assert.equal(useGraphStore.getState().future.length, 1);
+
+  const redone = useGraphStore.getState().redo();
+  assert.equal(redone, true);
+  assert.equal(useGraphStore.getState().nodes.length, initialCount + 1);
+});
+
+test("JSON node supports path queries, pretty/minify formatting, and Key-Value / Rows conversions", () => {
+  const jsonLines = [
+    '{"user": {"email": "alice@acme.io"}, "items": [{"id": 10}, {"id": 20}]}',
+    '{"user": {"email": "bob@acme.io"}, "items": [{"id": 30}]}',
+  ];
+
+  const emails = runOperation(
+    {
+      kind: "json",
+      label: "JSON",
+      params: {
+        mode: "query",
+        path: "user.email",
+        flattenArrays: true,
+        dropMissing: true,
+        missingFallback: "",
+        indent: 2,
+        sortKeys: false,
+        kvDelimiter: ":",
+        parsePrimitives: true,
+      },
+    },
+    jsonLines,
+  );
+  assert.deepEqual(emails, ["alice@acme.io", "bob@acme.io"]);
+
+  const itemIds = runOperation(
+    {
+      kind: "json",
+      label: "JSON",
+      params: {
+        mode: "query",
+        path: "items[*].id",
+        flattenArrays: true,
+        dropMissing: true,
+        missingFallback: "",
+        indent: 2,
+        sortKeys: false,
+        kvDelimiter: ":",
+        parsePrimitives: true,
+      },
+    },
+    jsonLines,
+  );
+  assert.deepEqual(itemIds, ["10", "20", "30"]);
+
+  const kvObject = runOperation(
+    {
+      kind: "json",
+      label: "JSON",
+      params: {
+        mode: "kvToJson",
+        path: "",
+        flattenArrays: true,
+        dropMissing: true,
+        missingFallback: "",
+        indent: 0,
+        sortKeys: true,
+        kvDelimiter: ":",
+        parsePrimitives: true,
+      },
+    },
+    ["role: admin", "active: true", "score: 42"],
+  );
+  assert.deepEqual(kvObject, ['{"active":true,"role":"admin","score":42}']);
+
+  const backToKv = runOperation(
+    {
+      kind: "json",
+      label: "JSON",
+      params: {
+        mode: "jsonToKv",
+        path: "",
+        flattenArrays: true,
+        dropMissing: true,
+        missingFallback: "",
+        indent: 2,
+        sortKeys: false,
+        kvDelimiter: ":",
+        parsePrimitives: true,
+      },
+    },
+    kvObject,
+  );
+  assert.deepEqual(backToKv, ["active: true", "role: admin", "score: 42"]);
+});
+
+test("Columns node keeps, reorders, or drops CSV columns and formats as CSV, TSV, or JSON", () => {
+  const csvRows = [
+    "id,name,role,score",
+    '101,"Smith, Alice",Admin,95',
+    '102,"Jones, Bob",Editor,88',
+  ];
+
+  const reorderedCsv = runOperation(
+    {
+      kind: "columns",
+      label: "Columns",
+      params: {
+        mode: "keep",
+        columns: "3, 2",
+        delimiter: ",",
+        quoteAware: true,
+        trimValues: true,
+        skipHeader: true,
+        outputFormat: "delimited",
+        outputDelimiter: ",",
+        quoteOutput: "auto",
+      },
+    },
+    csvRows,
+  );
+  assert.deepEqual(reorderedCsv, [
+    'Admin,"Smith, Alice"',
+    'Editor,"Jones, Bob"',
+  ]);
+
+  const droppedTsv = runOperation(
+    {
+      kind: "columns",
+      label: "Columns",
+      params: {
+        mode: "drop",
+        columns: "1, 4",
+        delimiter: ",",
+        quoteAware: true,
+        trimValues: true,
+        skipHeader: true,
+        outputFormat: "tsv",
+        outputDelimiter: ",",
+        quoteOutput: "never",
+      },
+    },
+    csvRows,
+  );
+  assert.deepEqual(droppedTsv, [
+    "Smith, Alice\tAdmin",
+    "Jones, Bob\tEditor",
+  ]);
+
+  const asJson = runOperation(
+    {
+      kind: "columns",
+      label: "Columns",
+      params: {
+        mode: "keep",
+        columns: "2, 4",
+        delimiter: ",",
+        quoteAware: true,
+        trimValues: true,
+        skipHeader: true,
+        outputFormat: "json",
+        outputDelimiter: ",",
+        quoteOutput: "auto",
+      },
+    },
+    csvRows,
+  );
+  const parsed = JSON.parse(asJson.join("\n"));
+  assert.deepEqual(parsed, [
+    { name: "Smith, Alice", score: 95 },
+    { name: "Jones, Bob", score: 88 },
+  ]);
+});
+
+test("fanOutColumns spawns Extract nodes only for the selected column numbers", () => {
+  const store = useGraphStore.getState();
+  store.resetProject();
+  const inputNode = useGraphStore.getState().nodes.find((n) => n.data.kind === "input")!;
+  store.updateNodeParams(inputNode.id, {
+    text: "id,name,email,role\n1,Alice,alice@acme.io,Admin\n2,Bob,bob@acme.io,User",
+    inputType: "lines",
+  });
+
+  const spawnedIds = useGraphStore.getState().fanOutColumns(inputNode.id, ",", true, true, [2, 4]);
+  assert.equal(spawnedIds.length, 2);
+  const state = useGraphStore.getState();
+  assert.deepEqual(state.outputs.get(spawnedIds[0]), ["Alice", "Bob"]);
+  assert.deepEqual(state.outputs.get(spawnedIds[1]), ["Admin", "User"]);
+});
+
+
+
 
 
 

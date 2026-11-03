@@ -36,6 +36,8 @@ const PALETTE_KINDS: OperationKind[] = [
   "unique",
   "number",
   "extract",
+  "columns",
+  "json",
   "pad",
   "template",
   "encode",
@@ -62,6 +64,8 @@ const nodeTypes: Record<OperationKind, typeof OperationNode> = {
   unique: OperationNode,
   number: OperationNode,
   extract: OperationNode,
+  columns: OperationNode,
+  json: OperationNode,
   pad: OperationNode,
   template: OperationNode,
   encode: OperationNode,
@@ -100,6 +104,10 @@ export function Canvas() {
   const copySelected = useGraphStore((s) => s.copySelected);
   const pasteSelected = useGraphStore((s) => s.pasteSelected);
   const connectMagnetically = useGraphStore((s) => s.connectMagnetically);
+  const undo = useGraphStore((s) => s.undo);
+  const redo = useGraphStore((s) => s.redo);
+  const canUndo = useGraphStore((s) => s.past.length > 0);
+  const canRedo = useGraphStore((s) => s.future.length > 0);
   const magnet = useRef<MagnetState>({ x: 0, y: 0, t: 0, targetId: null, since: 0, engaged: false });
   const lineRef = useRef<SVGLineElement>(null);
   const dwellTimer = useRef<number | null>(null);
@@ -246,6 +254,20 @@ export function Canvas() {
       if (isTypingTarget(event.target)) return;
       const key = event.key.toLowerCase();
       if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+        if (key === "z") {
+          event.preventDefault();
+          if (event.shiftKey) {
+            redo();
+          } else {
+            undo();
+          }
+          return;
+        }
+        if (key === "y") {
+          event.preventDefault();
+          redo();
+          return;
+        }
         if (key === "k") {
           event.preventDefault();
           openQuickAdd();
@@ -273,7 +295,7 @@ export function Canvas() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [copySelected, pasteSelected, openQuickAdd, selectedNodeId, toggleNodeBypass]);
+  }, [copySelected, pasteSelected, openQuickAdd, selectedNodeId, toggleNodeBypass, undo, redo]);
 
   const onNodeDragStart: OnNodeDrag<FlowNode> = useCallback((event) => {
     if (dwellTimer.current !== null) window.clearTimeout(dwellTimer.current);
@@ -399,6 +421,26 @@ export function Canvas() {
       }}
     >
       <div className="canvas__toolbar" role="toolbar" aria-label="Canvas actions">
+        <div className="canvas__dir-group" role="group" aria-label="History actions">
+          <button
+            type="button"
+            className="canvas__dir-btn"
+            onClick={() => undo()}
+            disabled={!canUndo}
+            title="Undo last graph change (Ctrl+Z)"
+          >
+            ↶ Undo
+          </button>
+          <button
+            type="button"
+            className="canvas__dir-btn"
+            onClick={() => redo()}
+            disabled={!canRedo}
+            title="Redo graph change (Ctrl+Y or Ctrl+Shift+Z)"
+          >
+            ↷ Redo
+          </button>
+        </div>
         <button
           type="button"
           className="canvas__tool-btn"

@@ -279,10 +279,44 @@ export function layoutGraphTopologically(
   });
 }
 
+interface HistorySnapshot {
+  nodes: FlowNode[];
+  edges: Edge[];
+  selectedNodeId: string | null;
+  layoutDirection: LayoutDirection;
+}
+
+const MAX_HISTORY = 50;
+let lastCommitMeta = { key: "", time: 0 };
+
+function cloneHistorySnapshot(state: {
+  nodes: FlowNode[];
+  edges: Edge[];
+  selectedNodeId: string | null;
+  layoutDirection: LayoutDirection;
+}): HistorySnapshot {
+  return {
+    nodes: state.nodes.map((n) => ({
+      ...n,
+      position: { ...n.position },
+      data: {
+        ...n.data,
+        params: structuredClone(n.data.params),
+      },
+    })),
+    edges: state.edges.map((e) => ({ ...e })),
+    selectedNodeId: state.selectedNodeId,
+    layoutDirection: state.layoutDirection,
+  };
+}
+
 interface GraphState {
   nodes: FlowNode[];
   edges: Edge[];
   selectedNodeId: string | null;
+  pinnedNodeId: string | null;
+  past: HistorySnapshot[];
+  future: HistorySnapshot[];
   viewport: Viewport | null;
   outputs: Map<string, Rows>;
   fullOutputs: Map<string, Rows>;
@@ -315,10 +349,14 @@ interface GraphState {
     sourceNodeId: string,
     delimiter?: string,
     quoteAware?: boolean,
-    skipHeader?: boolean
+    skipHeader?: boolean,
+    selectedColumns?: number[]
   ) => string[];
   removeEdge: (id: string) => void;
   setSelectedNode: (id: string | null) => void;
+  setPinnedNode: (id: string | null) => void;
+  undo: () => boolean;
+  redo: () => boolean;
   copySelected: () => boolean;
   pasteSelected: () => boolean;
   attachInputFile: (id: string, file: File) => void;
@@ -343,204 +381,242 @@ interface GraphState {
 
 const initialStarter = createStarterGraph();
 
-export const useGraphStore = create<GraphState>((set, get) => ({
-  nodes: initialStarter.nodes,
-  edges: initialStarter.edges,
-  selectedNodeId: null,
-  viewport: null,
-  outputs: evaluateGraph(initialStarter.nodes, initialStarter.edges, {
-    rowLimit: 10,
-    charLimit: 500,
-    direction: "head",
-    inputRowsById: previewRows,
-  }),
-  fullOutputs: new Map(),
-  isProcessing: false,
-  lastProcessTime: null,
-  previewRowLimitMode: "10",
-  previewRowCustom: 50,
-  previewCharLimitMode: "500",
-  previewCharCustom: 1000,
-  previewDirection: "head",
-  layoutDirection: "horizontal",
-  clipboard: null,
-  pasteIndex: 0,
-  isReadingFile: false,
+export const useGraphStore = create<GraphState>((set, get) => {
+  function recordHistory(coalesceKey?: string) {
+    const now = performance.now();
+    if (coalesceKey && lastCommitMeta.key === coalesceKey && now - lastCommitMeta.time < 750) {
+      lastCommitMeta.time = now;
+      return;
+    }
+    lastCommitMeta = { key: coalesceKey ?? "", time: coalesceKey ? now : 0 };
+    const snap = cloneHistorySnapshot(get());
+    const nextPast = [...get().past, snap];
+    if (nextPast.length > MAX_HISTORY) nextPast.shift();
+    set({ past: nextPast, future: [] });
+  }
 
-  onNodesChange: (changes) => {
-    for (const change of changes) {
-      if (change.type === "remove") {
-        forgetInputFile(change.id);
-        previewRows.delete(change.id);
+  return {
+    nodes: initialStarter.nodes,
+    edges: initialStarter.edges,
+    selectedNodeId: null,
+    pinnedNodeId: null,
+    past: [],
+    future: [],
+    viewport: null,
+    outputs: evaluateGraph(initialStarter.nodes, initialStarter.edges, {
+      rowLimit: 10,
+      charLimit: 500,
+      direction: "head",
+      inputRowsById: previewRows,
+    }),
+    fullOutputs: new Map(),
+    isProcessing: false,
+    lastProcessTime: null,
+    previewRowLimitMode: "10",
+    previewRowCustom: 50,
+    previewCharLimitMode: "500",
+    previewCharCustom: 1000,
+    previewDirection: "head",
+    layoutDirection: "horizontal",
+    clipboard: null,
+    pasteIndex: 0,
+    isReadingFile: false,
+
+    onNodesChange: (changes) => {
+      if (changes.some((c) => c.type === "remove")) {
+        recordHistory("delete-nodes");
+      } else if (changes.some((c) => c.type === "position" && c.dragging === true)) {
+        recordHistory("drag-nodes");
       }
-    }
-    set({ nodes: applyNodeChanges(changes, get().nodes) });
-    get().recompute();
-  },
-  onEdgesChange: (changes) => {
-    set({ edges: applyEdgeChanges(changes, get().edges) });
-    get().recompute();
-  },
-  onDelete: ({ nodes: deletedNodes, edges: deletedEdges }) => {
-    if (deletedNodes.length === 0) return;
-    const bridged = bridgeDeletedNodes(get().nodes, get().edges, deletedNodes, deletedEdges);
-    if (bridged !== get().edges) {
-      set({ edges: bridged });
+      for (const change of changes) {
+        if (change.type === "remove") {
+          forgetInputFile(change.id);
+          previewRows.delete(change.id);
+          if (get().pinnedNodeId === change.id) {
+            set({ pinnedNodeId: null });
+          }
+        }
+      }
+      set({ nodes: applyNodeChanges(changes, get().nodes) });
       get().recompute();
-    }
-  },
-  onConnect: (connection) => {
-    if (!connection.source || !connection.target || connection.source === connection.target) return;
-    const nodes = get().nodes;
-    const sourceKind = nodes.find((node) => node.id === connection.source)?.data.kind;
-    const sourceHandle = normalizeOutputSlot(sourceKind, connection.sourceHandle);
-    const targetKind = nodes.find((node) => node.id === connection.target)?.data.kind;
-    const targetHandle = normalizeInputSlot(targetKind, connection.targetHandle);
-    const filtered = replaceTargetInputEdge(get().edges, nodes, connection.target, targetHandle);
-    set({
-      edges: addEdge(
-        {
-          ...connection,
-          sourceHandle,
-          targetHandle,
-        },
-        filtered
-      ),
-    });
-    get().recompute();
-  },
-  addNode: (kind, position, edgeId) => {
-    const id = nanoid(6);
-    const node: FlowNode = {
-      id,
-      type: kind,
-      position,
-      data: { kind, label: OPERATION_LABELS[kind], params: defaultParams(kind) },
-    };
-    const nextNodes = [...get().nodes, node];
-    set({ nodes: nextNodes });
+    },
+    onEdgesChange: (changes) => {
+      if (changes.some((c) => c.type === "remove")) {
+        recordHistory("delete-edges");
+      }
+      set({ edges: applyEdgeChanges(changes, get().edges) });
+      get().recompute();
+    },
+    onDelete: ({ nodes: deletedNodes, edges: deletedEdges }) => {
+      if (deletedNodes.length === 0) return;
+      const bridged = bridgeDeletedNodes(get().nodes, get().edges, deletedNodes, deletedEdges);
+      if (bridged !== get().edges) {
+        set({ edges: bridged });
+        get().recompute();
+      }
+    },
+    onConnect: (connection) => {
+      if (!connection.source || !connection.target || connection.source === connection.target) return;
+      recordHistory();
+      const nodes = get().nodes;
+      const sourceKind = nodes.find((node) => node.id === connection.source)?.data.kind;
+      const sourceHandle = normalizeOutputSlot(sourceKind, connection.sourceHandle);
+      const targetKind = nodes.find((node) => node.id === connection.target)?.data.kind;
+      const targetHandle = normalizeInputSlot(targetKind, connection.targetHandle);
+      const filtered = replaceTargetInputEdge(get().edges, nodes, connection.target, targetHandle);
+      set({
+        edges: addEdge(
+          {
+            ...connection,
+            sourceHandle,
+            targetHandle,
+          },
+          filtered
+        ),
+      });
+      get().recompute();
+    },
+    addNode: (kind, position, edgeId) => {
+      recordHistory("add-node");
+      const id = nanoid(6);
+      const node: FlowNode = {
+        id,
+        type: kind,
+        position,
+        data: { kind, label: OPERATION_LABELS[kind], params: defaultParams(kind) },
+      };
+      const nextNodes = [...get().nodes, node];
+      set({ nodes: nextNodes });
 
-    const splicedEdge = edgeId ? get().edges.find((edge) => edge.id === edgeId) : undefined;
-    if (splicedEdge) {
+      const splicedEdge = edgeId ? get().edges.find((edge) => edge.id === edgeId) : undefined;
+      if (splicedEdge) {
+        let edges = get().edges.filter((edge) => edge.id !== edgeId);
+        if (kind !== "input") {
+          const sourceKind = nextNodes.find((n) => n.id === splicedEdge.source)?.data.kind;
+          edges = addEdge(
+            {
+              source: splicedEdge.source,
+              target: id,
+              sourceHandle: normalizeOutputSlot(sourceKind, splicedEdge.sourceHandle),
+              targetHandle: normalizeInputSlot(kind, null),
+            },
+            edges
+          );
+        }
+        if (kind !== "output") {
+          const targetKind = nextNodes.find((n) => n.id === splicedEdge.target)?.data.kind;
+          const targetHandle = normalizeInputSlot(targetKind, splicedEdge.targetHandle);
+          edges = replaceTargetInputEdge(edges, nextNodes, splicedEdge.target, targetHandle);
+          edges = addEdge(
+            {
+              source: id,
+              target: splicedEdge.target,
+              sourceHandle: normalizeOutputSlot(kind, null),
+              targetHandle,
+            },
+            edges
+          );
+        }
+        set({ edges });
+      }
+
+      get().recompute();
+      return id;
+    },
+    spliceNodeIntoEdge: (nodeId, edgeId) => {
+      const nodes = get().nodes;
+      const node = nodes.find((item) => item.id === nodeId);
+      const splicedEdge = get().edges.find((edge) => edge.id === edgeId);
+      if (!node || !splicedEdge) return;
+      if (splicedEdge.source === nodeId || splicedEdge.target === nodeId) return;
+      recordHistory();
+
       let edges = get().edges.filter((edge) => edge.id !== edgeId);
-      if (kind !== "input") {
-        const sourceKind = nextNodes.find((n) => n.id === splicedEdge.source)?.data.kind;
+      if (node.data.kind !== "input") {
+        const sourceKind = nodes.find((n) => n.id === splicedEdge.source)?.data.kind;
+        const inHandle = normalizeInputSlot(node.data.kind, null);
+        edges = replaceTargetInputEdge(edges, nodes, nodeId, inHandle);
         edges = addEdge(
           {
             source: splicedEdge.source,
-            target: id,
+            target: nodeId,
             sourceHandle: normalizeOutputSlot(sourceKind, splicedEdge.sourceHandle),
-            targetHandle: normalizeInputSlot(kind, null),
+            targetHandle: inHandle,
           },
           edges
         );
       }
-      if (kind !== "output") {
-        const targetKind = nextNodes.find((n) => n.id === splicedEdge.target)?.data.kind;
+      if (node.data.kind !== "output") {
+        const targetKind = nodes.find((n) => n.id === splicedEdge.target)?.data.kind;
         const targetHandle = normalizeInputSlot(targetKind, splicedEdge.targetHandle);
-        edges = replaceTargetInputEdge(edges, nextNodes, splicedEdge.target, targetHandle);
+        edges = replaceTargetInputEdge(edges, nodes, splicedEdge.target, targetHandle);
         edges = addEdge(
           {
-            source: id,
+            source: nodeId,
             target: splicedEdge.target,
-            sourceHandle: normalizeOutputSlot(kind, null),
+            sourceHandle: normalizeOutputSlot(node.data.kind, null),
             targetHandle,
           },
           edges
         );
       }
       set({ edges });
-    }
-
-    get().recompute();
-    return id;
-  },
-  spliceNodeIntoEdge: (nodeId, edgeId) => {
-    const nodes = get().nodes;
-    const node = nodes.find((item) => item.id === nodeId);
-    const splicedEdge = get().edges.find((edge) => edge.id === edgeId);
-    if (!node || !splicedEdge) return;
-    if (splicedEdge.source === nodeId || splicedEdge.target === nodeId) return;
-
-    let edges = get().edges.filter((edge) => edge.id !== edgeId);
-    if (node.data.kind !== "input") {
-      const sourceKind = nodes.find((n) => n.id === splicedEdge.source)?.data.kind;
-      const inHandle = normalizeInputSlot(node.data.kind, null);
-      edges = replaceTargetInputEdge(edges, nodes, nodeId, inHandle);
-      edges = addEdge(
-        {
-          source: splicedEdge.source,
-          target: nodeId,
-          sourceHandle: normalizeOutputSlot(sourceKind, splicedEdge.sourceHandle),
-          targetHandle: inHandle,
-        },
-        edges
-      );
-    }
-    if (node.data.kind !== "output") {
-      const targetKind = nodes.find((n) => n.id === splicedEdge.target)?.data.kind;
-      const targetHandle = normalizeInputSlot(targetKind, splicedEdge.targetHandle);
-      edges = replaceTargetInputEdge(edges, nodes, splicedEdge.target, targetHandle);
-      edges = addEdge(
-        {
-          source: nodeId,
-          target: splicedEdge.target,
-          sourceHandle: normalizeOutputSlot(node.data.kind, null),
-          targetHandle,
-        },
-        edges
-      );
-    }
-    set({ edges });
-    get().recompute();
-  },
-  updateNodeParams: (id, params) => {
-    set({
-      nodes: get().nodes.map((node) =>
-        node.id === id
-          ? { ...node, data: { ...node.data, params: { ...node.data.params, ...params } as NodeData["params"] } }
-          : node
-      ),
-    });
-    const node = get().nodes.find((item) => item.id === id);
-    if (node && isFileInput(node)) void refreshFilePreviews();
-    else get().recompute();
-  },
-  renameNode: (id, label) => {
-    set({
-      nodes: get().nodes.map((node) => (node.id === id ? { ...node, data: { ...node.data, label } } : node)),
-    });
-  },
-  setNodeNote: (id, note) => {
-    set({
-      nodes: get().nodes.map((node) => (node.id === id ? { ...node, data: { ...node.data, note } } : node)),
-    });
-  },
-  toggleNodeBypass: (id) => {
-    set({
-      nodes: get().nodes.map((node) =>
-        node.id === id && node.data.kind !== "input" && node.data.kind !== "output"
-          ? { ...node, data: { ...node.data, bypassed: !node.data.bypassed } }
-          : node
-      ),
-    });
-    get().recompute();
-  },
-  tidyGraph: (direction) => {
-    const dir = direction ?? get().layoutDirection;
-    set({
-      layoutDirection: dir,
-      nodes: layoutGraphTopologically(get().nodes, get().edges, dir),
-    });
-  },
-  setLayoutDirection: (direction) => {
-    set({
-      layoutDirection: direction,
-      nodes: layoutGraphTopologically(get().nodes, get().edges, direction),
-    });
-  },
-  quickAddNode: (kind, fallbackPosition) => {
-    const state = get();
+      get().recompute();
+    },
+    updateNodeParams: (id, params) => {
+      recordHistory(`params:${id}`);
+      set({
+        nodes: get().nodes.map((node) =>
+          node.id === id
+            ? { ...node, data: { ...node.data, params: { ...node.data.params, ...params } as NodeData["params"] } }
+            : node
+        ),
+      });
+      const node = get().nodes.find((item) => item.id === id);
+      if (node && isFileInput(node)) void refreshFilePreviews();
+      else get().recompute();
+    },
+    renameNode: (id, label) => {
+      recordHistory(`rename:${id}`);
+      set({
+        nodes: get().nodes.map((node) => (node.id === id ? { ...node, data: { ...node.data, label } } : node)),
+      });
+    },
+    setNodeNote: (id, note) => {
+      recordHistory(`note:${id}`);
+      set({
+        nodes: get().nodes.map((node) => (node.id === id ? { ...node, data: { ...node.data, note } } : node)),
+      });
+    },
+    toggleNodeBypass: (id) => {
+      recordHistory();
+      set({
+        nodes: get().nodes.map((node) =>
+          node.id === id && node.data.kind !== "input" && node.data.kind !== "output"
+            ? { ...node, data: { ...node.data, bypassed: !node.data.bypassed } }
+            : node
+        ),
+      });
+      get().recompute();
+    },
+    tidyGraph: (direction) => {
+      recordHistory();
+      const dir = direction ?? get().layoutDirection;
+      set({
+        layoutDirection: dir,
+        nodes: layoutGraphTopologically(get().nodes, get().edges, dir),
+      });
+    },
+    setLayoutDirection: (direction) => {
+      recordHistory();
+      set({
+        layoutDirection: direction,
+        nodes: layoutGraphTopologically(get().nodes, get().edges, direction),
+      });
+    },
+    quickAddNode: (kind, fallbackPosition) => {
+      recordHistory("add-node");
+      const state = get();
     const isVertical = state.layoutDirection === "vertical";
     const selected = state.selectedNodeId
       ? state.nodes.find((n) => n.id === state.selectedNodeId)
@@ -669,311 +745,378 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     });
     return newId;
   },
-  fanOutColumns: (sourceNodeId, delimiter = ",", quoteAware = true, skipHeader = true) => {
-    const state = get();
-    const sourceNode = state.nodes.find((n) => n.id === sourceNodeId);
-    if (!sourceNode || sourceNode.data.kind === "output") return [];
-    const rows = state.outputs.get(sourceNodeId) ?? [];
-    const firstRow = rows.find((r) => r.trim().length > 0) ?? "";
-    const cols = parseCsvColumns(firstRow, delimiter, quoteAware).slice(0, 12);
-    if (cols.length <= 1) return [];
+    fanOutColumns: (
+      sourceNodeId,
+      delimiter = ",",
+      quoteAware = true,
+      skipHeader = true,
+      selectedColumns
+    ) => {
+      const state = get();
+      const sourceNode = state.nodes.find((n) => n.id === sourceNodeId);
+      if (!sourceNode || sourceNode.data.kind === "output") return [];
+      const rows = state.outputs.get(sourceNodeId) ?? [];
+      const firstRow = rows.find((r) => r.trim().length > 0) ?? "";
+      const cols = parseCsvColumns(firstRow, delimiter, quoteAware).slice(0, 12);
+      if (cols.length <= 1) return [];
+      const targetCols =
+        selectedColumns && selectedColumns.length > 0
+          ? selectedColumns.filter((c) => c >= 1 && c <= cols.length)
+          : cols.map((_, idx) => idx + 1);
+      if (targetCols.length === 0) return [];
+      recordHistory();
 
-    const isVertical = state.layoutDirection === "vertical";
-    const sourceHandle = normalizeOutputSlot(sourceNode.data.kind, null);
-    const createdNodes: FlowNode[] = [];
-    let nextEdges = [...state.edges];
-    const createdIds: string[] = [];
+      const isVertical = state.layoutDirection === "vertical";
+      const sourceHandle = normalizeOutputSlot(sourceNode.data.kind, null);
+      const createdNodes: FlowNode[] = [];
+      let nextEdges = [...state.edges];
+      const createdIds: string[] = [];
 
-    const startY = sourceNode.position.y - ((cols.length - 1) * 125) / 2;
-    const startX = sourceNode.position.x - ((cols.length - 1) * 230) / 2;
+      const startY = sourceNode.position.y - ((targetCols.length - 1) * 125) / 2;
+      const startX = sourceNode.position.x - ((targetCols.length - 1) * 230) / 2;
 
-    cols.forEach((rawHeader, idx) => {
-      const colNum = idx + 1;
-      const cleanHeader = rawHeader.replace(/[\r\n]+/g, " ").trim();
-      const shortHeader = cleanHeader.length > 18 ? `${cleanHeader.slice(0, 18)}…` : cleanHeader;
-      const label = shortHeader ? `Col ${colNum}: ${shortHeader}` : `Column ${colNum}`;
-      const note =
-        skipHeader && shortHeader
-          ? `CSV col #${colNum} ("${shortHeader}", skips header)`
-          : `CSV col #${colNum}`;
-      const id = nanoid(6);
-      createdIds.push(id);
-      const position = isVertical
-        ? { x: Math.round(startX + idx * 230), y: sourceNode.position.y + 165 }
-        : { x: sourceNode.position.x + 260, y: Math.round(startY + idx * 125) };
+      targetCols.forEach((colNum, idx) => {
+        const rawHeader = cols[colNum - 1] ?? "";
+        const cleanHeader = rawHeader.replace(/[\r\n]+/g, " ").trim();
+        const shortHeader = cleanHeader.length > 18 ? `${cleanHeader.slice(0, 18)}…` : cleanHeader;
+        const label = shortHeader ? `Col ${colNum}: ${shortHeader}` : `Column ${colNum}`;
+        const note =
+          skipHeader && shortHeader
+            ? `CSV col #${colNum} ("${shortHeader}", skips header)`
+            : `CSV col #${colNum}`;
+        const id = nanoid(6);
+        createdIds.push(id);
+        const position = isVertical
+          ? { x: Math.round(startX + idx * 230), y: sourceNode.position.y + 165 }
+          : { x: sourceNode.position.x + 260, y: Math.round(startY + idx * 125) };
 
-      createdNodes.push({
-        id,
-        type: "extract",
-        position,
-        selected: idx === 0,
-        data: {
-          kind: "extract",
-          label,
-          note,
-          params: {
-            ...defaultParams("extract"),
-            mode: "column",
-            delimiter,
-            column: colNum,
-            quoteAware,
-            skipHeader,
-            trimValues: true,
+        createdNodes.push({
+          id,
+          type: "extract",
+          position,
+          selected: idx === 0,
+          data: {
+            kind: "extract",
+            label,
+            note,
+            params: {
+              ...defaultParams("extract"),
+              mode: "column",
+              delimiter,
+              column: colNum,
+              quoteAware,
+              skipHeader,
+              trimValues: true,
+            },
           },
-        },
+        });
+
+        nextEdges = addEdge(
+          {
+            source: sourceNode.id,
+            target: id,
+            sourceHandle,
+            targetHandle: null,
+          },
+          nextEdges
+        );
       });
 
-      nextEdges = addEdge(
-        {
-          source: sourceNode.id,
-          target: id,
-          sourceHandle,
-          targetHandle: null,
-        },
-        nextEdges
-      );
-    });
+      set({
+        nodes: [...state.nodes.map((n) => ({ ...n, selected: false })), ...createdNodes],
+        edges: nextEdges,
+        selectedNodeId: createdIds[0] ?? state.selectedNodeId,
+      });
+      get().recompute();
+      return createdIds;
+    },
+    removeEdge: (id) => {
+      recordHistory();
+      set({ edges: get().edges.filter((edge) => edge.id !== id) });
+      get().recompute();
+    },
+    setSelectedNode: (id) => set({ selectedNodeId: id }),
+    setPinnedNode: (id) => set({ pinnedNodeId: id }),
+    undo: () => {
+      const state = get();
+      if (state.past.length === 0) return false;
+      const previous = state.past[state.past.length - 1];
+      const currentSnapshot = cloneHistorySnapshot(state);
+      lastCommitMeta = { key: "", time: 0 };
+      set({
+        nodes: previous.nodes,
+        edges: previous.edges,
+        selectedNodeId: previous.selectedNodeId,
+        layoutDirection: previous.layoutDirection,
+        past: state.past.slice(0, -1),
+        future: [currentSnapshot, ...state.future].slice(0, MAX_HISTORY),
+      });
+      if (hasFileInput(previous.nodes)) void refreshFilePreviews();
+      else get().recompute();
+      return true;
+    },
+    redo: () => {
+      const state = get();
+      if (state.future.length === 0) return false;
+      const next = state.future[0];
+      const currentSnapshot = cloneHistorySnapshot(state);
+      lastCommitMeta = { key: "", time: 0 };
+      set({
+        nodes: next.nodes,
+        edges: next.edges,
+        selectedNodeId: next.selectedNodeId,
+        layoutDirection: next.layoutDirection,
+        past: [...state.past, currentSnapshot].slice(-MAX_HISTORY),
+        future: state.future.slice(1),
+      });
+      if (hasFileInput(next.nodes)) void refreshFilePreviews();
+      else get().recompute();
+      return true;
+    },
+    copySelected: () => {
+      const snapshot = snapshotSelection(get().nodes, get().edges, get().selectedNodeId);
+      if (!snapshot) return false;
+      set({ clipboard: snapshot, pasteIndex: 0 });
+      return true;
+    },
+    pasteSelected: () => {
+      const clipboard = get().clipboard;
+      if (!clipboard || clipboard.nodes.length === 0) return false;
+      recordHistory();
 
-    set({
-      nodes: [...state.nodes.map((n) => ({ ...n, selected: false })), ...createdNodes],
-      edges: nextEdges,
-      selectedNodeId: createdIds[0] ?? state.selectedNodeId,
-    });
-    get().recompute();
-    return createdIds;
-  },
-  removeEdge: (id) => {
-    set({ edges: get().edges.filter((edge) => edge.id !== id) });
-    get().recompute();
-  },
-  setSelectedNode: (id) => set({ selectedNodeId: id }),
-  copySelected: () => {
-    const snapshot = snapshotSelection(get().nodes, get().edges, get().selectedNodeId);
-    if (!snapshot) return false;
-    set({ clipboard: snapshot, pasteIndex: 0 });
-    return true;
-  },
-  pasteSelected: () => {
-    const clipboard = get().clipboard;
-    if (!clipboard || clipboard.nodes.length === 0) return false;
-
-    const pasted = pasteClipboard(clipboard, get().pasteIndex, () => nanoid(6));
-    let copiedFile = false;
-    for (const [oldId, newId] of pasted.idMap) {
-      if (getInputFile(oldId)) {
-        copyInputFile(oldId, newId);
-        copiedFile = true;
+      const pasted = pasteClipboard(clipboard, get().pasteIndex, () => nanoid(6));
+      let copiedFile = false;
+      for (const [oldId, newId] of pasted.idMap) {
+        if (getInputFile(oldId)) {
+          copyInputFile(oldId, newId);
+          copiedFile = true;
+        }
       }
-    }
-    set({
-      nodes: [...get().nodes.map((node) => ({ ...node, selected: false })), ...pasted.nodes],
-      edges: [...get().edges.map((edge) => ({ ...edge, selected: false })), ...pasted.edges],
-      pasteIndex: get().pasteIndex + 1,
-      selectedNodeId: pasted.nodes[0]?.id ?? null,
-    });
-    if (copiedFile) void refreshFilePreviews();
-    else get().recompute();
-    return true;
-  },
-  attachInputFile: (id, file) => {
-    setInputFile(id, file);
-    previewRows.delete(id);
-    set({
-      nodes: get().nodes.map((node) =>
-        node.id === id && node.data.kind === "input"
-          ? {
-              ...node,
-              data: {
-                ...node.data,
-                params: {
-                  ...(node.data.params as OperationParams["input"]),
-                  source: "file",
-                  fileName: file.name,
-                  fileSize: file.size,
+      set({
+        nodes: [...get().nodes.map((node) => ({ ...node, selected: false })), ...pasted.nodes],
+        edges: [...get().edges.map((edge) => ({ ...edge, selected: false })), ...pasted.edges],
+        pasteIndex: get().pasteIndex + 1,
+        selectedNodeId: pasted.nodes[0]?.id ?? null,
+      });
+      if (copiedFile) void refreshFilePreviews();
+      else get().recompute();
+      return true;
+    },
+    attachInputFile: (id, file) => {
+      recordHistory();
+      setInputFile(id, file);
+      previewRows.delete(id);
+      set({
+        nodes: get().nodes.map((node) =>
+          node.id === id && node.data.kind === "input"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  params: {
+                    ...(node.data.params as OperationParams["input"]),
+                    source: "file",
+                    fileName: file.name,
+                    fileSize: file.size,
+                  },
                 },
-              },
-            }
-          : node
-      ),
-    });
-    void refreshFilePreviews();
-  },
-  clearInputFile: (id) => {
-    forgetInputFile(id);
-    previewRows.delete(id);
-    set({
-      nodes: get().nodes.map((node) =>
-        node.id === id && node.data.kind === "input"
-          ? {
-              ...node,
-              data: {
-                ...node.data,
-                params: {
-                  ...(node.data.params as OperationParams["input"]),
-                  source: "text",
-                  fileName: "",
-                  fileSize: 0,
+              }
+            : node
+        ),
+      });
+      void refreshFilePreviews();
+    },
+    clearInputFile: (id) => {
+      recordHistory();
+      forgetInputFile(id);
+      previewRows.delete(id);
+      set({
+        nodes: get().nodes.map((node) =>
+          node.id === id && node.data.kind === "input"
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  params: {
+                    ...(node.data.params as OperationParams["input"]),
+                    source: "text",
+                    fileName: "",
+                    fileSize: 0,
+                  },
                 },
-              },
-            }
-          : node
-      ),
-    });
-    get().recompute();
-  },
-  resetProject: () => {
-    replaceInputFiles([]);
-    previewRows.clear();
-    const starter = createStarterGraph();
-    const dir = get().layoutDirection;
-    const starterNodes =
-      dir === "vertical"
-        ? layoutGraphTopologically(starter.nodes, starter.edges, "vertical")
-        : starter.nodes;
-    set({
-      nodes: starterNodes,
-      edges: starter.edges,
-      selectedNodeId: null,
-      viewport: { x: 0, y: 0, zoom: 1 },
-      outputs: new Map(),
-      fullOutputs: new Map(),
-      lastProcessTime: null,
-      isProcessing: false,
-      isReadingFile: false,
-      previewRowLimitMode: "10",
-      previewRowCustom: 50,
-      previewCharLimitMode: "500",
-      previewCharCustom: 1000,
-      clipboard: null,
-      pasteIndex: 0,
-    });
-    get().recompute();
-  },
-  applyTemplate: (templateId) => {
-    const template = GRAPH_TEMPLATES.find((item) => item.id === templateId);
-    if (!template) return;
-    replaceInputFiles([]);
-    previewRows.clear();
-    const { nodes: rawNodes, edges } = template.createGraph();
-    const dir = get().layoutDirection;
-    const nodes =
-      dir === "vertical"
-        ? layoutGraphTopologically(rawNodes, edges, "vertical")
-        : rawNodes;
-    const outputNode = nodes.find((node) => node.data.kind === "output");
-    set({
-      nodes,
-      edges,
-      selectedNodeId: outputNode?.id ?? nodes[0]?.id ?? null,
-      viewport: { x: 0, y: 0, zoom: 1 },
-      fullOutputs: new Map(),
-      lastProcessTime: null,
-      isProcessing: false,
-      isReadingFile: false,
-    });
-    get().recompute();
-  },
-  setViewport: (viewport) => {
-    const previous = get().viewport;
-    if (previous && previous.x === viewport.x && previous.y === viewport.y && previous.zoom === viewport.zoom) return;
-    set({ viewport });
-  },
-  restoreProject: (project) => {
-    replaceInputFiles(
-      project.files.map(({ nodeId, name, type, blob }) => ({
-        nodeId,
-        file: new File([blob], name, { type }),
-      }))
-    );
-    previewRows.clear();
-    const nodes = project.nodes.map((node) => ({ ...node, selected: false, dragging: false }));
-    set({
-      nodes,
-      edges: project.edges,
-      viewport: project.viewport,
-      selectedNodeId: null,
-      previewRowLimitMode: project.preview.rowMode,
-      previewRowCustom: project.preview.rowCustom,
-      previewCharLimitMode: project.preview.charMode,
-      previewCharCustom: project.preview.charCustom,
-      fullOutputs: new Map(),
-      lastProcessTime: null,
-    });
-    if (hasFileInput(nodes)) void refreshFilePreviews();
-    else get().recompute();
-  },
-  connectMagnetically: (draggedId, hoveredId, draggedX, hoveredHandle, draggedHandle) => {
-    const nodes = get().nodes;
-    const dragged = nodes.find((node) => node.id === draggedId);
-    const hovered = nodes.find((node) => node.id === hoveredId);
-    if (!dragged || !hovered) return false;
-    const link = planMagneticConnection(
-      { id: dragged.id, kind: dragged.data.kind, x: draggedX, y: dragged.position.y },
-      { id: hovered.id, kind: hovered.data.kind, x: hovered.position.x, y: hovered.position.y },
-      get().edges,
-      hoveredHandle,
-      draggedHandle
-    );
-    if (!link) return false;
-    const sourceKind = nodes.find((node) => node.id === link.source)?.data.kind;
-    const sourceHandle = normalizeOutputSlot(sourceKind, link.sourceHandle);
-    const targetKind = nodes.find((node) => node.id === link.target)?.data.kind;
-    const targetHandle = normalizeInputSlot(targetKind, link.targetHandle);
-    const exists = get().edges.some(
-      (edge) =>
-        edge.source === link.source &&
-        edge.target === link.target &&
-        normalizeOutputSlot(sourceKind, edge.sourceHandle) === sourceHandle &&
-        normalizeInputSlot(targetKind, edge.targetHandle) === targetHandle
-    );
-    if (exists) return true;
-    const filtered = replaceTargetInputEdge(get().edges, nodes, link.target, targetHandle);
-    set({
-      edges: addEdge(
-        { source: link.source, target: link.target, sourceHandle, targetHandle },
-        filtered
-      ),
-    });
-    get().recompute();
-    return true;
-  },
-  setPreviewRowLimit: (mode, custom) => {
-    set({
-      previewRowLimitMode: mode,
-      ...(custom !== undefined ? { previewRowCustom: custom } : {}),
-    });
-    if (hasFileInput(get().nodes)) void refreshFilePreviews();
-    else get().recompute();
-  },
-  setPreviewCharLimit: (mode, custom) => {
-    set({
-      previewCharLimitMode: mode,
-      ...(custom !== undefined ? { previewCharCustom: custom } : {}),
-    });
-    if (hasFileInput(get().nodes)) void refreshFilePreviews();
-    else get().recompute();
-  },
-  setPreviewDirection: (direction) => {
-    set({ previewDirection: direction });
-    if (hasFileInput(get().nodes)) void refreshFilePreviews();
-    else get().recompute();
-  },
-  processFullGraph: () => {
-    void runFullProcess();
-  },
-  recompute: () => {
-    const rowLimit = getRowLimit(get().previewRowLimitMode, get().previewRowCustom);
-    const charLimit = getCharLimit(get().previewCharLimitMode, get().previewCharCustom);
-    const direction = get().previewDirection;
-    const outputs = evaluateGraph(get().nodes, get().edges, {
-      rowLimit,
-      charLimit,
-      direction,
-      inputRowsById: previewRows,
-    });
-    set({ outputs });
-  },
-}));
+              }
+            : node
+        ),
+      });
+      get().recompute();
+    },
+    resetProject: () => {
+      replaceInputFiles([]);
+      previewRows.clear();
+      lastCommitMeta = { key: "", time: 0 };
+      const starter = createStarterGraph();
+      const dir = get().layoutDirection;
+      const starterNodes =
+        dir === "vertical"
+          ? layoutGraphTopologically(starter.nodes, starter.edges, "vertical")
+          : starter.nodes;
+      set({
+        nodes: starterNodes,
+        edges: starter.edges,
+        selectedNodeId: null,
+        pinnedNodeId: null,
+        past: [],
+        future: [],
+        viewport: { x: 0, y: 0, zoom: 1 },
+        outputs: new Map(),
+        fullOutputs: new Map(),
+        lastProcessTime: null,
+        isProcessing: false,
+        isReadingFile: false,
+        previewRowLimitMode: "10",
+        previewRowCustom: 50,
+        previewCharLimitMode: "500",
+        previewCharCustom: 1000,
+        clipboard: null,
+        pasteIndex: 0,
+      });
+      get().recompute();
+    },
+    applyTemplate: (templateId) => {
+      const template = GRAPH_TEMPLATES.find((item) => item.id === templateId);
+      if (!template) return;
+      replaceInputFiles([]);
+      previewRows.clear();
+      lastCommitMeta = { key: "", time: 0 };
+      const { nodes: rawNodes, edges } = template.createGraph();
+      const dir = get().layoutDirection;
+      const nodes =
+        dir === "vertical"
+          ? layoutGraphTopologically(rawNodes, edges, "vertical")
+          : rawNodes;
+      const outputNode = nodes.find((node) => node.data.kind === "output");
+      set({
+        nodes,
+        edges,
+        selectedNodeId: outputNode?.id ?? nodes[0]?.id ?? null,
+        pinnedNodeId: null,
+        past: [],
+        future: [],
+        viewport: { x: 0, y: 0, zoom: 1 },
+        fullOutputs: new Map(),
+        lastProcessTime: null,
+        isProcessing: false,
+        isReadingFile: false,
+      });
+      get().recompute();
+    },
+    setViewport: (viewport) => {
+      const previous = get().viewport;
+      if (previous && previous.x === viewport.x && previous.y === viewport.y && previous.zoom === viewport.zoom) return;
+      set({ viewport });
+    },
+    restoreProject: (project) => {
+      replaceInputFiles(
+        project.files.map(({ nodeId, name, type, blob }) => ({
+          nodeId,
+          file: new File([blob], name, { type }),
+        }))
+      );
+      previewRows.clear();
+      lastCommitMeta = { key: "", time: 0 };
+      const nodes = project.nodes.map((node) => ({ ...node, selected: false, dragging: false }));
+      set({
+        nodes,
+        edges: project.edges,
+        viewport: project.viewport,
+        selectedNodeId: null,
+        pinnedNodeId: null,
+        past: [],
+        future: [],
+        previewRowLimitMode: project.preview.rowMode,
+        previewRowCustom: project.preview.rowCustom,
+        previewCharLimitMode: project.preview.charMode,
+        previewCharCustom: project.preview.charCustom,
+        fullOutputs: new Map(),
+        lastProcessTime: null,
+      });
+      if (hasFileInput(nodes)) void refreshFilePreviews();
+      else get().recompute();
+    },
+    connectMagnetically: (draggedId, hoveredId, draggedX, hoveredHandle, draggedHandle) => {
+      const nodes = get().nodes;
+      const dragged = nodes.find((node) => node.id === draggedId);
+      const hovered = nodes.find((node) => node.id === hoveredId);
+      if (!dragged || !hovered) return false;
+      const link = planMagneticConnection(
+        { id: dragged.id, kind: dragged.data.kind, x: draggedX, y: dragged.position.y },
+        { id: hovered.id, kind: hovered.data.kind, x: hovered.position.x, y: hovered.position.y },
+        get().edges,
+        hoveredHandle,
+        draggedHandle
+      );
+      if (!link) return false;
+      const sourceKind = nodes.find((node) => node.id === link.source)?.data.kind;
+      const sourceHandle = normalizeOutputSlot(sourceKind, link.sourceHandle);
+      const targetKind = nodes.find((node) => node.id === link.target)?.data.kind;
+      const targetHandle = normalizeInputSlot(targetKind, link.targetHandle);
+      const exists = get().edges.some(
+        (edge) =>
+          edge.source === link.source &&
+          edge.target === link.target &&
+          normalizeOutputSlot(sourceKind, edge.sourceHandle) === sourceHandle &&
+          normalizeInputSlot(targetKind, edge.targetHandle) === targetHandle
+      );
+      if (exists) return true;
+      recordHistory();
+      const filtered = replaceTargetInputEdge(get().edges, nodes, link.target, targetHandle);
+      set({
+        edges: addEdge(
+          { source: link.source, target: link.target, sourceHandle, targetHandle },
+          filtered
+        ),
+      });
+      get().recompute();
+      return true;
+    },
+    setPreviewRowLimit: (mode, custom) => {
+      set({
+        previewRowLimitMode: mode,
+        ...(custom !== undefined ? { previewRowCustom: custom } : {}),
+      });
+      if (hasFileInput(get().nodes)) void refreshFilePreviews();
+      else get().recompute();
+    },
+    setPreviewCharLimit: (mode, custom) => {
+      set({
+        previewCharLimitMode: mode,
+        ...(custom !== undefined ? { previewCharCustom: custom } : {}),
+      });
+      if (hasFileInput(get().nodes)) void refreshFilePreviews();
+      else get().recompute();
+    },
+    setPreviewDirection: (direction) => {
+      set({ previewDirection: direction });
+      if (hasFileInput(get().nodes)) void refreshFilePreviews();
+      else get().recompute();
+    },
+    processFullGraph: () => {
+      void runFullProcess();
+    },
+    recompute: () => {
+      const rowLimit = getRowLimit(get().previewRowLimitMode, get().previewRowCustom);
+      const charLimit = getCharLimit(get().previewCharLimitMode, get().previewCharCustom);
+      const direction = get().previewDirection;
+      const outputs = evaluateGraph(get().nodes, get().edges, {
+        rowLimit,
+        charLimit,
+        direction,
+        inputRowsById: previewRows,
+      });
+      set({ outputs });
+    },
+  };
+});
 
 async function refreshFilePreviews(): Promise<void> {
   const token = ++previewToken;

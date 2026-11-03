@@ -116,8 +116,14 @@
   transition: background 0.15s, color 0.15s;
 }
 
-.canvas__dir-btn:hover {
+.canvas__dir-btn:hover:not(:disabled) {
   color: #e4e4e7;
+}
+
+.canvas__dir-btn:disabled {
+  color: #52525b;
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .canvas__dir-btn.is-active {
