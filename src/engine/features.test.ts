@@ -955,6 +955,34 @@ test("fanOutColumns spawns Extract nodes only for the selected column numbers", 
   assert.deepEqual(state.outputs.get(spawnedIds[1]), ["Admin", "User"]);
 });
 
+test("addNode splices into a vertical edge, aligns to the column, and pushes downstream nodes down", () => {
+  const store = useGraphStore.getState();
+  store.resetProject();
+  store.setLayoutDirection("vertical");
+  const before = useGraphStore.getState();
+  const inputNode = before.nodes.find((n) => n.data.kind === "input")!;
+  const outputNode = before.nodes.find((n) => n.data.kind === "output")!;
+  const edgeId = before.edges[0].id;
+
+  const newId = useGraphStore.getState().addNode(
+    "case",
+    { x: inputNode.position.x + 25, y: inputNode.position.y + 80 },
+    edgeId,
+  );
+
+  const after = useGraphStore.getState();
+  const splicedNode = after.nodes.find((n) => n.id === newId)!;
+  const updatedOutput = after.nodes.find((n) => n.id === outputNode.id)!;
+
+  assert.equal(splicedNode.position.x, inputNode.position.x);
+  assert.ok(splicedNode.position.y >= inputNode.position.y + 140);
+  assert.ok(updatedOutput.position.y >= splicedNode.position.y + 140);
+  assert.equal(after.edges.length, 2);
+  assert.ok(after.edges.some((e) => e.source === inputNode.id && e.target === newId));
+  assert.ok(after.edges.some((e) => e.source === newId && e.target === outputNode.id));
+});
+
+
 
 
 

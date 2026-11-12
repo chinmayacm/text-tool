@@ -124,12 +124,13 @@ export function Canvas() {
     void applyViewport(viewport);
   }, [viewport, applyViewport]);
 
-  /** Finds the edge (if any) rendered directly under or near a viewport point, so dropped nodes can splice into it. */
+  /** Finds the edge (if any) rendered directly under or near a viewport point, or in the corridor between two connected nodes. */
   function findEdgeIdAtPoint(x: number, y: number): string | undefined {
     const offsets = [
       [0, 0], [0, -10], [0, 10], [-10, 0], [10, 0],
       [-15, -15], [15, -15], [-15, 15], [15, 15],
       [0, -25], [0, 25], [-25, 0], [25, 0],
+      [-30, 0], [30, 0], [0, -30], [0, 30],
     ];
     for (const [dx, dy] of offsets) {
       for (const el of document.elementsFromPoint(x + dx, y + dy)) {
@@ -140,7 +141,58 @@ export function Canvas() {
         }
       }
     }
-    return undefined;
+
+    // Fallback: check if (x, y) lies in the vertical or horizontal corridor between two connected nodes
+    const currentEdges = useGraphStore.getState().edges;
+    let bestEdgeId: string | undefined;
+    let bestDist = Infinity;
+
+    for (const edge of currentEdges) {
+      const srcEl = document.querySelector<HTMLElement>(
+        `.react-flow__node[data-id="${CSS.escape(edge.source)}"]`
+      );
+      const tgtEl = document.querySelector<HTMLElement>(
+        `.react-flow__node[data-id="${CSS.escape(edge.target)}"]`
+      );
+      if (!srcEl || !tgtEl) continue;
+      const srcRect = srcEl.getBoundingClientRect();
+      const tgtRect = tgtEl.getBoundingClientRect();
+
+      const topRect = srcRect.top <= tgtRect.top ? srcRect : tgtRect;
+      const bottomRect = srcRect.top <= tgtRect.top ? tgtRect : srcRect;
+      if (bottomRect.top >= topRect.bottom - 20) {
+        const minX = Math.min(topRect.left, bottomRect.left) - 28;
+        const maxX = Math.max(topRect.right, bottomRect.right) + 28;
+        if (y >= topRect.bottom - 18 && y <= bottomRect.top + 18 && x >= minX && x <= maxX) {
+          const midX =
+            (topRect.left + topRect.width / 2 + (bottomRect.left + bottomRect.width / 2)) / 2;
+          const dist = Math.abs(x - midX);
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestEdgeId = edge.id;
+          }
+          continue;
+        }
+      }
+
+      const leftRect = srcRect.left <= tgtRect.left ? srcRect : tgtRect;
+      const rightRect = srcRect.left <= tgtRect.left ? tgtRect : srcRect;
+      if (rightRect.left >= leftRect.right - 20) {
+        const minY = Math.min(leftRect.top, rightRect.top) - 28;
+        const maxY = Math.max(leftRect.bottom, rightRect.bottom) + 28;
+        if (x >= leftRect.right - 18 && x <= rightRect.left + 18 && y >= minY && y <= maxY) {
+          const midY =
+            (leftRect.top + leftRect.height / 2 + (rightRect.top + rightRect.height / 2)) / 2;
+          const dist = Math.abs(y - midY);
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestEdgeId = edge.id;
+          }
+        }
+      }
+    }
+
+    return bestEdgeId;
   }
 
   function clearPaletteMagnet() {
@@ -161,14 +213,17 @@ export function Canvas() {
         setPaletteDragKind(null);
         return;
       }
-      const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      const rawPos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      const position = { x: Math.round(rawPos.x - 90), y: Math.round(rawPos.y - 34) };
       const { targetId, engaged } = paletteMagnet.current;
       clearPaletteMagnet();
       setPaletteDragKind(null);
-      const edgeId = engaged ? undefined : findEdgeIdAtPoint(e.clientX, e.clientY);
+      const directNodeId = findNodeIdAtPoint(e.clientX, e.clientY);
+      const useMagnet = engaged && Boolean(targetId) && directNodeId === targetId;
+      const edgeId = useMagnet ? undefined : findEdgeIdAtPoint(e.clientX, e.clientY);
       const newNodeId = addNode(kind, position, edgeId);
-      if (engaged && targetId) {
-        connectMagnetically(newNodeId, targetId, position.x, handleAt(targetId, e.clientY), null);
+      if (useMagnet && targetId) {
+        connectMagnetically(newNodeId, targetId, position.x, handleAt(targetId, e.clientX, e.clientY), null);
       }
     },
     [screenToFlowPosition, addNode, connectMagnetically]
@@ -385,8 +440,8 @@ export function Canvas() {
           node.id,
           targetId,
           node.position.x,
-          point ? handleAt(targetId, point.y) : null,
-          point ? handleAt(node.id, point.y) : null
+          point ? handleAt(targetId, point.x, point.y) : null,
+          point ? handleAt(node.id, point.x, point.y) : null
         );
       }
     },
@@ -652,6 +707,7 @@ function findOverlappedNodeId(draggedId: string): string | undefined {
 
 function findNodeIdAtPoint(x: number, y: number): string | undefined {
   for (const el of document.elementsFromPoint(x, y)) {
+    if ((el as Element).closest(".op-node__handle")) continue;
     const nodeEl = (el as Element).closest(".react-flow__node");
     const id = nodeEl?.getAttribute("data-id");
     if (id) return id;
@@ -659,10 +715,13 @@ function findNodeIdAtPoint(x: number, y: number): string | undefined {
   return undefined;
 }
 
-function handleAt(nodeId: string, clientY: number): string | null {
+function handleAt(nodeId: string, clientX: number, clientY: number): string | null {
   const el = document.querySelector(`.react-flow__node[data-id="${CSS.escape(nodeId)}"]`);
   if (!el) return "a";
   const rect = el.getBoundingClientRect();
+  if (useGraphStore.getState().layoutDirection === "vertical") {
+    return clientX < rect.left + rect.width / 2 ? "a" : "b";
+  }
   return clientY < rect.top + rect.height / 2 ? "a" : "b";
 }
 

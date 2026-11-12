@@ -479,18 +479,82 @@ export const useGraphStore = create<GraphState>((set, get) => {
     addNode: (kind, position, edgeId) => {
       recordHistory("add-node");
       const id = nanoid(6);
+      const existingNodes = get().nodes;
+      const existingEdges = get().edges;
+      const splicedEdge = edgeId ? existingEdges.find((edge) => edge.id === edgeId) : undefined;
+
+      let finalPos = { ...position };
+      let adjustedNodes = existingNodes;
+
+      if (splicedEdge) {
+        const srcNode = existingNodes.find((n) => n.id === splicedEdge.source);
+        const tgtNode = existingNodes.find((n) => n.id === splicedEdge.target);
+        if (srcNode && tgtNode) {
+          const isVerticalEdge =
+            Math.abs(tgtNode.position.y - srcNode.position.y) >=
+            Math.abs(tgtNode.position.x - srcNode.position.x);
+
+          const collectDownstream = (startId: string): Set<string> => {
+            const visited = new Set<string>();
+            const stack = [startId];
+            while (stack.length > 0) {
+              const cur = stack.pop()!;
+              if (visited.has(cur)) continue;
+              visited.add(cur);
+              for (const e of existingEdges) {
+                if (e.source === cur && !visited.has(e.target)) {
+                  stack.push(e.target);
+                }
+              }
+            }
+            return visited;
+          };
+
+          if (isVerticalEdge && tgtNode.position.y >= srcNode.position.y) {
+            const midX = Math.round((srcNode.position.x + tgtNode.position.x) / 2);
+            if (Math.abs(position.x - midX) < 120) {
+              finalPos.x = midX;
+            }
+            finalPos.y = Math.max(position.y, srcNode.position.y + 140);
+            if (tgtNode.position.y < finalPos.y + 140) {
+              const deltaY = finalPos.y + 150 - tgtNode.position.y;
+              const downstream = collectDownstream(tgtNode.id);
+              adjustedNodes = existingNodes.map((n) =>
+                downstream.has(n.id)
+                  ? { ...n, position: { x: n.position.x, y: n.position.y + deltaY } }
+                  : n
+              );
+            }
+          } else if (!isVerticalEdge && tgtNode.position.x >= srcNode.position.x) {
+            const midY = Math.round((srcNode.position.y + tgtNode.position.y) / 2);
+            if (Math.abs(position.y - midY) < 70) {
+              finalPos.y = midY;
+            }
+            finalPos.x = Math.max(position.x, srcNode.position.x + 220);
+            if (tgtNode.position.x < finalPos.x + 220) {
+              const deltaX = finalPos.x + 240 - tgtNode.position.x;
+              const downstream = collectDownstream(tgtNode.id);
+              adjustedNodes = existingNodes.map((n) =>
+                downstream.has(n.id)
+                  ? { ...n, position: { x: n.position.x + deltaX, y: n.position.y } }
+                  : n
+              );
+            }
+          }
+        }
+      }
+
       const node: FlowNode = {
         id,
         type: kind,
-        position,
+        position: finalPos,
         data: { kind, label: OPERATION_LABELS[kind], params: defaultParams(kind) },
       };
-      const nextNodes = [...get().nodes, node];
+      const nextNodes = [...adjustedNodes, node];
       set({ nodes: nextNodes });
 
-      const splicedEdge = edgeId ? get().edges.find((edge) => edge.id === edgeId) : undefined;
       if (splicedEdge) {
-        let edges = get().edges.filter((edge) => edge.id !== edgeId);
+        let edges = existingEdges.filter((edge) => edge.id !== edgeId);
         if (kind !== "input") {
           const sourceKind = nextNodes.find((n) => n.id === splicedEdge.source)?.data.kind;
           edges = addEdge(
